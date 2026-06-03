@@ -1,23 +1,28 @@
 from aiogram import Router, F
 from aiogram.types import Message
-from aiogram.enums import ChatMemberStatus
 
 router = Router()
 
-async def is_admin(message: Message):
-    member = await message.bot.get_chat_member(
-        message.chat.id,
-        message.from_user.id
-    )
-    return member.status in [
-        ChatMemberStatus.ADMINISTRATOR,
-        ChatMemberStatus.CREATOR
-    ]
-
 @router.message(F.text == "/start")
-async def start_cmd(message: Message):
-    await message.answer("🤖 Bot aktif dan siap digunakan!")
+async def start(message: Message):
+    if message.chat.type == "private":
+        await message.answer(
+            "🤖 Group Manager Bot\n\n"
+            "➕ Add me to group\n"
+            "👮 Make me admin\n\n"
+            "📌 /help to see commands"
+        )
+    else:
+        await message.answer("✅ Bot aktif di group ini")
 
-@router.message(F.text == "/id")
-async def get_id(message: Message):
-    await message.answer(f"🆔 ID kamu: {message.from_user.id}")
+@router.message(F.text == "/help")
+async def help_cmd(message: Message):
+    await message.answer(
+        "📖 COMMAND LIST\n\n"
+        "👮 Admin:\n"
+        "/ban (reply)\n"
+        "/kick (reply)\n"
+        "/mute (reply)\n"
+        "/unmute (reply)\n\n"
+        "⚠️ Bot hanya bekerja full di group"
+    )
