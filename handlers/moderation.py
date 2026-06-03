@@ -182,7 +182,7 @@ async def warn_user(message: Message):
     await db.add_warn(message.chat.id, user)
 
     data = await db.get_warn(message.chat.id, user)
-    count = data["count"]
+    count = data["count"] if date else 0
 
     await message.reply(f"⚠️ Warn {count}/3")
 
