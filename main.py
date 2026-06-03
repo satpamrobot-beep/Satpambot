@@ -8,13 +8,20 @@ async def main():
 
     print("🚀 Starting bot...")
 
+    if not BOT_TOKEN:
+        print("❌ BOT_TOKEN KOSONG")
+        return
+
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
 
-    # routers
-    dp.include_router(admin.router)
-    dp.include_router(moderation.router)
-    dp.include_router(welcome.router)
+    try:
+        dp.include_router(admin.router)
+        dp.include_router(moderation.router)
+        dp.include_router(welcome.router)
+    except Exception as e:
+        print("❌ ROUTER ERROR:", e)
+        return
 
     print("🤖 Bot running...")
 
