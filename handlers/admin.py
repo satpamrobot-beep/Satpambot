@@ -2,7 +2,7 @@ import asyncio
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
-from config import OWNER_ID, MAINTENANCE_MODE
+from config import OWNER_ID
 from database import db
 
 router = Router()
@@ -11,19 +11,21 @@ router = Router()
 def is_owner(user_id: int):
     return user_id == OWNER_ID
 
-# ================= ADMIN PANEL =================
+# ================= PANEL =================
 @router.message(F.text == "/panel")
 async def panel(message: Message):
 
     if not is_owner(message.from_user.id):
         return await message.reply("❌ No access")
 
-    status = "🔴 ON" if MAINTENANCE_MODE else "🟢 OFF"
+    status = await db.get_setting("maintenance")  # dari DB
+
+    status_text = "🔴 ON" if status else "🟢 OFF"
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
-                text=f"🔧 Maintenance: {status}",
+                text=f"🔧 Maintenance: {status_text}",
                 callback_data="toggle_maintenance"
             )
         ],
@@ -34,40 +36,43 @@ async def panel(message: Message):
     ])
 
     await message.answer(
-        "🛠 <b>ROSE PRO PANEL</b>\n\n"
-        "⚙️ Control System Bot",
+        "🛠 <b>ROSE PRO PANEL</b>\n\nControl Center",
         parse_mode="HTML",
         reply_markup=keyboard
     )
 
-# ================= TOGGLE MAINTENANCE =================
+# ================= TOGGLE MAINTENANCE (DB VERSION) =================
 @router.callback_query(F.data == "toggle_maintenance")
 async def toggle_maintenance(callback: CallbackQuery):
 
-    global MAINTENANCE_MODE
-
-    if callback.from_user.id != OWNER_ID:
+    if not is_owner(callback.from_user.id):
         return await callback.answer("No access", show_alert=True)
 
-    MAINTENANCE_MODE = not MAINTENANCE_MODE
+    current = await db.get_setting("maintenance")
+    new_status = not current
 
-    status = "ON 🔴" if MAINTENANCE_MODE else "OFF 🟢"
+    await db.set_setting("maintenance", new_status)
+
+    status_text = "ON 🔴" if new_status else "OFF 🟢"
 
     await callback.message.edit_text(
-        f"🛠 <b>MAINTENANCE</b>\n\nStatus: {status}",
+        f"🛠 <b>MAINTENANCE</b>\nStatus: {status_text}",
         parse_mode="HTML"
     )
 
     await callback.answer("Updated")
 
-# ================= STATS REAL =================
+# ================= STATS =================
 @router.callback_query(F.data == "stats_menu")
 async def stats(callback: CallbackQuery):
+
+    if not is_owner(callback.from_user.id):
+        return await callback.answer("No access", show_alert=True)
 
     users = await db.count_users()
     groups = await db.count_groups()
 
-    await callback.message.answer(
+    await callback.message.edit_text(
         "📊 <b>REAL STATS</b>\n\n"
         f"👤 Users: {users}\n"
         f"👥 Groups: {groups}",
@@ -76,22 +81,7 @@ async def stats(callback: CallbackQuery):
 
     await callback.answer()
 
-# ================= BROADCAST SYSTEM =================
-broadcast_cache = {}
-
-@router.callback_query(F.data == "broadcast_menu")
-async def broadcast_menu(callback: CallbackQuery):
-
-    if callback.from_user.id != OWNER_ID:
-        return await callback.answer("No access", show_alert=True)
-
-    await callback.message.answer(
-        "📢 Kirim pesan broadcast:\n\n"
-        "Ketik:\n/broadcast pesan kamu"
-    )
-
-    await callback.answer()
-
+# ================= BROADCAST =================
 @router.message(F.text.startswith("/broadcast"))
 async def broadcast(message: Message, bot):
 
@@ -103,17 +93,17 @@ async def broadcast(message: Message, bot):
     if not text:
         return await message.reply("Usage: /broadcast <text>")
 
-    users = await db.get_all_users()
-
-    sent = 0
+    users = await db.get_all_users() or []
 
     msg = await message.reply("📢 Sending broadcast...")
+
+    sent = 0
 
     for user_id in users:
         try:
             await bot.send_message(user_id, f"📢 {text}")
             sent += 1
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.03)
         except:
             continue
 
