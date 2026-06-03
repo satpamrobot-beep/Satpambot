@@ -1,99 +1,333 @@
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton
+)
 
 router = Router()
 
-# =========================
-# DASHBOARD TEXT
-# =========================
-DASHBOARD = """
-🤖 ROSE STYLE BOT ACTIVATED
-
-📌 Status: ONLINE
-🛠 Mode: PROTECTION SYSTEM v3
-
-┌──────── SECURITY CORE ────────┐
-[ 👋 Greeting ]   [ 🔒 Lock ]
-[ 🧹 Filter ]     [ 🚫 AntiSpam ]
-└───────────────────────────────┘
-
-┌──────── ADVANCED SECURITY ─────┐
-[ 🛡 Verification ]   [ ⚡ Force Join ]
-[ ⏳ Join Delay ]      [ 🚫 Auto Kick ]
-└───────────────────────────────┘
-
-┌──────── CONTROL SYSTEM ────────┐
-[ 🚫 Ban Tools ]      [ 📉 Flood Control ]
-[ ⏳ Cooldown ]       [ 👀 Hidden Join/Leave ]
-└───────────────────────────────┘
-
-┌──────── ADMIN PANEL ───────────┐
-[ ⚙️ Settings ]   [ 📊 Stats ]
-[ 📖 Help ]
-└───────────────────────────────┘
-"""
 
 # =========================
-# MAIN KEYBOARD
+# MAIN PANEL
 # =========================
-def main_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="👋 Greeting", callback_data="greet"),
-            InlineKeyboardButton(text="🔒 Lock", callback_data="lock")
-        ],
-        [
-            InlineKeyboardButton(text="🧹 Filter", callback_data="filter"),
-            InlineKeyboardButton(text="🚫 AntiSpam", callback_data="antispam")
-        ],
-        [
-            InlineKeyboardButton(text="🛡 Verification", callback_data="verify"),
-            InlineKeyboardButton(text="⚡ Force Join", callback_data="force")
-        ],
-        [
-            InlineKeyboardButton(text="⏳ Join Delay", callback_data="delay"),
-            InlineKeyboardButton(text="🚫 Auto Kick", callback_data="autokick")
-        ],
-        [
-            InlineKeyboardButton(text="📉 Flood", callback_data="flood"),
-            InlineKeyboardButton(text="⏳ Cooldown", callback_data="cooldown")
-        ],
-        [
-            InlineKeyboardButton(text="⚙️ Settings", callback_data="settings"),
-            InlineKeyboardButton(text="📊 Stats", callback_data="stats")
-        ],
-        [
-            InlineKeyboardButton(text="📖 Help", callback_data="help")
+
+@router.callback_query(
+    F.data == "admin_panel"
+)
+async def open_panel(
+    call: CallbackQuery
+):
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+
+            [
+                InlineKeyboardButton(
+                    text="👥 Moderation",
+                    callback_data="panel_mod"
+                ),
+
+                InlineKeyboardButton(
+                    text="🛡 Protection",
+                    callback_data="panel_protect"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    text="💬 Greetings",
+                    callback_data="panel_greet"
+                ),
+
+                InlineKeyboardButton(
+                    text="📊 Statistics",
+                    callback_data="panel_stats"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    text="⚙ Settings",
+                    callback_data="panel_settings"
+                )
+            ]
         ]
-    ])
-
-# =========================
-# /start = DASHBOARD
-# =========================
-@router.message(F.text == "/start")
-async def start(message: Message):
-    await message.answer(
-        DASHBOARD,
-        reply_markup=main_kb()
     )
 
-# =========================
-# NAVIGATION (EDIT MESSAGE SYSTEM)
-# =========================
-@router.callback_query()
-async def menu(call: CallbackQuery):
+    await call.message.edit_text(
+        "⚙ Admin Panel",
+        reply_markup=keyboard
+    )
 
-    data = call.data
+    await call.answer()
 
-    # semua tombol balikin ke dashboard dulu (simple system)
-    if data in [
-        "greet","lock","filter","antispam",
-        "verify","force","delay","autokick",
-        "flood","cooldown","settings","stats","help"
-    ]:
-        await call.message.edit_text(
-            DASHBOARD + f"\n\n📌 Menu: {data.upper()} (COMING SOON)",
-            reply_markup=main_kb()
-        )
+
+# =========================
+# MODERATION
+# =========================
+
+@router.callback_query(
+    F.data == "panel_mod"
+)
+async def moderation_panel(
+    call: CallbackQuery
+):
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+
+            [
+                InlineKeyboardButton(
+                    text="⚠ Warns",
+                    callback_data="mod_warns"
+                ),
+
+                InlineKeyboardButton(
+                    text="🔨 Bans",
+                    callback_data="mod_bans"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    text="🔇 Mutes",
+                    callback_data="mod_mutes"
+                ),
+
+                InlineKeyboardButton(
+                    text="🚨 Reports",
+                    callback_data="mod_reports"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    text="⬅ Back",
+                    callback_data="admin_panel"
+                )
+            ]
+        ]
+    )
+
+    await call.message.edit_text(
+        "👥 Moderation Panel",
+        reply_markup=keyboard
+    )
+
+    await call.answer()
+
+
+# =========================
+# PROTECTION
+# =========================
+
+@router.callback_query(
+    F.data == "panel_protect"
+)
+async def protection_panel(
+    call: CallbackQuery
+):
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+
+            [
+                InlineKeyboardButton(
+                    text="🔒 Locks",
+                    callback_data="protect_locks"
+                ),
+
+                InlineKeyboardButton(
+                    text="🚫 Filters",
+                    callback_data="protect_filters"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    text="🛑 Flood",
+                    callback_data="protect_flood"
+                ),
+
+                InlineKeyboardButton(
+                    text="⏳ Cooldown",
+                    callback_data="protect_cooldown"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    text="🤖 Captcha",
+                    callback_data="protect_captcha"
+                ),
+
+                InlineKeyboardButton(
+                    text="🚷 Anti Spam",
+                    callback_data="protect_antispam"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    text="⬅ Back",
+                    callback_data="admin_panel"
+                )
+            ]
+        ]
+    )
+
+    await call.message.edit_text(
+        "🛡 Protection Panel",
+        reply_markup=keyboard
+    )
+
+    await call.answer()
+
+
+# =========================
+# GREETINGS
+# =========================
+
+@router.callback_query(
+    F.data == "panel_greet"
+)
+async def greetings_panel(
+    call: CallbackQuery
+):
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+
+            [
+                InlineKeyboardButton(
+                    text="👋 Welcome",
+                    callback_data="greet_welcome"
+                ),
+
+                InlineKeyboardButton(
+                    text="🚪 Leave",
+                    callback_data="greet_leave"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    text="📥 Join Logs",
+                    callback_data="greet_join"
+                ),
+
+                InlineKeyboardButton(
+                    text="📤 Leave Logs",
+                    callback_data="greet_leave_logs"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    text="⬅ Back",
+                    callback_data="admin_panel"
+                )
+            ]
+        ]
+    )
+
+    await call.message.edit_text(
+        "💬 Greetings Panel",
+        reply_markup=keyboard
+    )
+
+    await call.answer()
+
+
+# =========================
+# STATISTICS
+# =========================
+
+@router.callback_query(
+    F.data == "panel_stats"
+)
+async def stats_panel(
+    call: CallbackQuery
+):
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+
+            [
+                InlineKeyboardButton(
+                    text="👤 Users",
+                    callback_data="stats_users"
+                ),
+
+                InlineKeyboardButton(
+                    text="👥 Groups",
+                    callback_data="stats_groups"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    text="⚠ Warn Stats",
+                    callback_data="stats_warns"
+                ),
+
+                InlineKeyboardButton(
+                    text="🚨 Reports",
+                    callback_data="stats_reports"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    text="⬅ Back",
+                    callback_data="admin_panel"
+                )
+            ]
+        ]
+    )
+
+    await call.message.edit_text(
+        "📊 Statistics Panel",
+        reply_markup=keyboard
+    )
+
+    await call.answer()
+
+
+# =========================
+# SETTINGS
+# =========================
+
+@router.callback_query(
+    F.data == "panel_settings"
+)
+async def settings_panel(
+    call: CallbackQuery
+):
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+
+            [
+                InlineKeyboardButton(
+                    text="⚙ Group Config",
+                    callback_data="set_config"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    text="⬅ Back",
+                    callback_data="admin_panel"
+                )
+            ]
+        ]
+    )
+
+    await call.message.edit_text(
+        "⚙ Settings Panel",
+        reply_markup=keyboard
+    )
 
     await call.answer()
