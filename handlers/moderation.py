@@ -14,53 +14,72 @@ async def is_admin(message: Message):
         ChatMemberStatus.CREATOR
     ]
 
-# =====================
-# BAN USER
-# =====================
+# ================= BAN =================
 @router.message(F.text.startswith("/ban"))
-async def ban_user(message: Message):
+async def ban(message: Message):
     if not await is_admin(message):
-        return await message.reply("❌ Kamu bukan admin")
+        return await message.reply("❌ Bukan admin")
 
     if not message.reply_to_message:
-        return await message.reply("⚠️ Reply user untuk ban")
+        return await message.reply("Reply user untuk ban")
 
-    user_id = message.reply_to_message.from_user.id
-    await message.bot.ban_chat_member(message.chat.id, user_id)
+    user = message.reply_to_message.from_user.id
+    await message.bot.ban_chat_member(message.chat.id, user)
+    await message.reply("✅ User diban")
 
-    await message.reply("✅ User berhasil diban")
-
-# =====================
-# UNBAN USER
-# =====================
-@router.message(F.text.startswith("/unban"))
-async def unban_user(message: Message):
-    if not await is_admin(message):
-        return await message.reply("❌ Kamu bukan admin")
-
-    try:
-        user_id = int(message.text.split()[1])
-    except:
-        return await message.reply("⚠️ Gunakan /unban <user_id>")
-
-    await message.bot.unban_chat_member(message.chat.id, user_id)
-
-    await message.reply("✅ User berhasil di-unban")
-
-# =====================
-# KICK USER
-# =====================
+# ================= KICK =================
 @router.message(F.text.startswith("/kick"))
-async def kick_user(message: Message):
+async def kick(message: Message):
     if not await is_admin(message):
-        return await message.reply("❌ Kamu bukan admin")
+        return
 
     if not message.reply_to_message:
-        return await message.reply("⚠️ Reply user untuk kick")
+        return
 
-    user_id = message.reply_to_message.from_user.id
-
-    await message.bot.ban_chat_member(message.chat.id, user_id)
-    await message.bot.unban_chat_member(message.chat.id, user_id)
+    user = message.reply_to_message.from_user.id
+    await message.bot.ban_chat_member(message.chat.id, user)
+    await message.bot.unban_chat_member(message.chat.id, user)
 
     await message.reply("👢 User di-kick")
+
+# ================= MUTE (simple) =================
+@router.message(F.text.startswith("/mute"))
+async def mute(message: Message):
+    if not await is_admin(message):
+        return
+
+    if not message.reply_to_message:
+        return
+
+    user = message.reply_to_message.from_user.id
+
+    await message.bot.restrict_chat_member(
+        message.chat.id,
+        user,
+        permissions={
+            "can_send_messages": False
+        }
+    )
+
+    await message.reply("🔇 User dimute")
+
+# ================= UNMUTE =================
+@router.message(F.text.startswith("/unmute"))
+async def unmute(message: Message):
+    if not await is_admin(message):
+        return
+
+    if not message.reply_to_message:
+        return
+
+    user = message.reply_to_message.from_user.id
+
+    await message.bot.restrict_chat_member(
+        message.chat.id,
+        user,
+        permissions={
+            "can_send_messages": True
+        }
+    )
+
+    await message.reply("🔊 User di-unmute")
