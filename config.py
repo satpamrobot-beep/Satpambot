@@ -37,3 +37,11 @@ except ValueError:
 # DATABASE optional
 if not DATABASE_URL:
     print("⚠️ DATABASE_URL tidak di-set (bot jalan tanpa database)")
+
+# =========================
+
+# SYSTEM FLAGS
+
+# =========================
+
+MAINTENANCE_MODE = False
