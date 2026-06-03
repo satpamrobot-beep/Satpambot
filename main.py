@@ -3,6 +3,7 @@ from aiogram import Bot, Dispatcher
 
 from config import BOT_TOKEN
 from handlers import admin, moderation, welcome, start
+from handlers import help
 
 async def main():
 
@@ -16,6 +17,7 @@ async def main():
     dp.include_router(admin.router)
     dp.include_router(moderation.router)
     dp.include_router(welcome.router)
+    dp.include_router(help.router)
 
     print("🤖 Bot running...")
 
