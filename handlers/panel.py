@@ -9,6 +9,23 @@ router = Router()
 
 
 # =========================
+# LOCKED PANEL
+# =========================
+
+@router.callback_query(
+    F.data == "locked_panel"
+)
+async def locked_panel(
+    call: CallbackQuery
+):
+
+    await call.answer(
+        "Promote bot menjadi admin dulu.",
+        show_alert=True
+    )
+
+
+# =========================
 # MAIN PANEL
 # =========================
 
@@ -64,7 +81,7 @@ async def open_panel(
 
 
 # =========================
-# MODERATION
+# MODERATION MENU
 # =========================
 
 @router.callback_query(
@@ -80,24 +97,24 @@ async def moderation_panel(
             [
                 InlineKeyboardButton(
                     text="⚠ Warns",
-                    callback_data="mod_warns"
+                    callback_data="open_warns"
                 ),
 
                 InlineKeyboardButton(
                     text="🔨 Bans",
-                    callback_data="mod_bans"
+                    callback_data="open_bans"
                 )
             ],
 
             [
                 InlineKeyboardButton(
                     text="🔇 Mutes",
-                    callback_data="mod_mutes"
+                    callback_data="open_mutes"
                 ),
 
                 InlineKeyboardButton(
                     text="🚨 Reports",
-                    callback_data="mod_reports"
+                    callback_data="open_reports"
                 )
             ],
 
@@ -111,7 +128,7 @@ async def moderation_panel(
     )
 
     await call.message.edit_text(
-        "👥 Moderation Panel",
+        "👥 Moderation Menu",
         reply_markup=keyboard
     )
 
@@ -119,81 +136,7 @@ async def moderation_panel(
 
 
 # =========================
-# WARN SETTINGS
-# =========================
-
-@router.callback_query(
-    F.data == "mod_warns"
-)
-async def warns_panel(
-    call: CallbackQuery
-):
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-
-            [
-                InlineKeyboardButton(
-                    text="⚙ Set Limit",
-                    callback_data="warn_limit"
-                )
-            ],
-
-            [
-                InlineKeyboardButton(
-                    text="🔨 Action",
-                    callback_data="warn_action"
-                )
-            ],
-
-            [
-                InlineKeyboardButton(
-                    text="📜 Logs",
-                    callback_data="warn_logs"
-                )
-            ],
-
-            [
-                InlineKeyboardButton(
-                    text="♻ Reset Config",
-                    callback_data="warn_reset_config"
-                )
-            ],
-
-            [
-                InlineKeyboardButton(
-                    text="⬅ Back",
-                    callback_data="panel_mod"
-                )
-            ]
-        ]
-    )
-
-    await call.message.edit_text(
-        """
-⚠ Warn Settings
-
-Admin grup menentukan:
-
-• Warn limit
-• Punishment action
-• Logs
-• Reset config
-
-Commands:
-
-/warn
-/warns
-/resetwarn
-""",
-        reply_markup=keyboard
-    )
-
-    await call.answer()
-
-
-# =========================
-# PROTECTION
+# PROTECTION MENU
 # =========================
 
 @router.callback_query(
@@ -209,36 +152,36 @@ async def protection_panel(
             [
                 InlineKeyboardButton(
                     text="🔒 Locks",
-                    callback_data="protect_locks"
+                    callback_data="open_locks"
                 ),
 
                 InlineKeyboardButton(
                     text="🚫 Filters",
-                    callback_data="protect_filters"
+                    callback_data="open_filters"
                 )
             ],
 
             [
                 InlineKeyboardButton(
                     text="🛑 Flood",
-                    callback_data="protect_flood"
+                    callback_data="open_flood"
                 ),
 
                 InlineKeyboardButton(
                     text="⏳ Cooldown",
-                    callback_data="protect_cooldown"
+                    callback_data="open_cooldown"
                 )
             ],
 
             [
                 InlineKeyboardButton(
                     text="🤖 Captcha",
-                    callback_data="protect_captcha"
+                    callback_data="open_captcha"
                 ),
 
                 InlineKeyboardButton(
                     text="🚷 Anti Spam",
-                    callback_data="protect_antispam"
+                    callback_data="open_antispam"
                 )
             ],
 
@@ -252,7 +195,7 @@ async def protection_panel(
     )
 
     await call.message.edit_text(
-        "🛡 Protection Panel",
+        "🛡 Protection Menu",
         reply_markup=keyboard
     )
 
@@ -260,7 +203,7 @@ async def protection_panel(
 
 
 # =========================
-# GREETINGS
+# GREETINGS MENU
 # =========================
 
 @router.callback_query(
@@ -276,24 +219,24 @@ async def greetings_panel(
             [
                 InlineKeyboardButton(
                     text="👋 Welcome",
-                    callback_data="greet_welcome"
+                    callback_data="open_welcome"
                 ),
 
                 InlineKeyboardButton(
                     text="🚪 Leave",
-                    callback_data="greet_leave"
+                    callback_data="open_leave"
                 )
             ],
 
             [
                 InlineKeyboardButton(
                     text="📥 Join Logs",
-                    callback_data="greet_join"
+                    callback_data="open_joinlogs"
                 ),
 
                 InlineKeyboardButton(
                     text="📤 Leave Logs",
-                    callback_data="greet_leave_logs"
+                    callback_data="open_leavelogs"
                 )
             ],
 
@@ -307,7 +250,7 @@ async def greetings_panel(
     )
 
     await call.message.edit_text(
-        "💬 Greetings Panel",
+        "💬 Greetings Menu",
         reply_markup=keyboard
     )
 
@@ -315,7 +258,7 @@ async def greetings_panel(
 
 
 # =========================
-# STATISTICS
+# STATS MENU
 # =========================
 
 @router.callback_query(
@@ -327,6 +270,7 @@ async def stats_panel(
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
+
             [
                 InlineKeyboardButton(
                     text="👤 Users",
@@ -361,7 +305,7 @@ async def stats_panel(
     )
 
     await call.message.edit_text(
-        "📊 Statistics Panel",
+        "📊 Statistics Menu",
         reply_markup=keyboard
     )
 
@@ -369,7 +313,7 @@ async def stats_panel(
 
 
 # =========================
-# SETTINGS
+# SETTINGS MENU
 # =========================
 
 @router.callback_query(
@@ -385,7 +329,7 @@ async def settings_panel(
             [
                 InlineKeyboardButton(
                     text="⚙ Group Config",
-                    callback_data="set_config"
+                    callback_data="open_config"
                 )
             ],
 
@@ -399,7 +343,7 @@ async def settings_panel(
     )
 
     await call.message.edit_text(
-        "⚙ Settings Panel",
+        "⚙ Settings Menu",
         reply_markup=keyboard
     )
 
