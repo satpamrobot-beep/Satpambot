@@ -5,49 +5,42 @@ router = Router()
 
 welcome_text = {}
 
-# ================= BOT JOIN =================
+# =========================
+# NEW MEMBER HANDLER (SINGLE ENTRY)
+# =========================
 @router.message(F.new_chat_members)
-async def on_join(message: Message):
+async def new_member(message: Message):
 
     for user in message.new_chat_members:
 
+        # ================= BOT JOIN =================
         if user.is_bot:
             await message.answer(
                 "🤖 Bot berhasil ditambahkan!\n\n"
-                "⚙️ Langkah:\n"
+                "⚙️ Langkah setup:\n"
                 "1. Jadikan admin\n"
-                "2. Beri izin delete & ban\n"
-                "3. Ketik /help",
+                "2. Aktifkan izin delete & ban\n"
+                "3. Ketik /help"
             )
+            return
 
-# ================= WELCOME USER =================
-@router.message(F.new_chat_members)
-async def greet(message: Message):
+        # ================= USER JOIN =================
+        text = welcome_text.get(
+            message.chat.id,
+            "👋 Welcome {user} to the group!"
+        )
 
-    text = "👋 Welcome {user}"
+        await message.answer(text.replace("{user}", user.full_name))
 
-    for user in message.new_chat_members:
-        if not user.is_bot:
-            await message.answer(text.replace("{user}", user.full_name))
-
-# ================= SET WELCOME =================
+# =========================
+# SET WELCOME
+# =========================
 @router.message(F.text.startswith("/setwelcome"))
 async def setwelcome(message: Message):
 
     if not message.reply_to_message:
-        return await message.reply("Reply pesan")
+        return await message.reply("❌ Reply pesan untuk dijadikan welcome")
 
     welcome_text[message.chat.id] = message.reply_to_message.text
-    await message.reply("✅ Welcome disimpan")
 
-# ================= AUTO GREET =================
-@router.message(F.new_chat_members)
-async def auto_greet(message: Message):
-
-    for user in message.new_chat_members:
-        if user.is_bot:
-            return
-
-        text = welcome_text.get(message.chat.id, "👋 Welcome {user}")
-
-        await message.answer(text.replace("{user}", user.full_name))
+    await message.reply("✅ Welcome message saved")
