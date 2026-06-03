@@ -3,7 +3,7 @@ from aiogram.types import Message, ChatPermissions
 from aiogram.enums import ChatMemberStatus
 
 from config import MAINTENANCE_MODE
-from database import db  # untuk warn persistent
+from database import db
 
 router = Router()
 
@@ -125,7 +125,8 @@ async def mute(message: Message):
             can_send_messages=False,
             can_send_media_messages=False,
             can_send_other_messages=False,
-            can_add_web_page_previews=False
+            can_add_web_page_previews=False,
+            can_send_polls=False
         )
     )
 
@@ -155,7 +156,8 @@ async def unmute(message: Message):
             can_send_messages=True,
             can_send_media_messages=True,
             can_send_other_messages=True,
-            can_add_web_page_previews=True
+            can_add_web_page_previews=True,
+            can_send_polls=True
         )
     )
 
@@ -163,7 +165,7 @@ async def unmute(message: Message):
     await message.bot.send_message(message.chat.id, "🔊 User bisa chat lagi")
 
 # =========================
-# WARN SYSTEM (PERSISTENT DB)
+# WARN SYSTEM (SAFE + PERSISTENT)
 # =========================
 @router.message(F.text.startswith("/warn"))
 async def warn_user(message: Message):
@@ -178,11 +180,13 @@ async def warn_user(message: Message):
     if not user:
         return await message.reply(warn("Reply user untuk warn"))
 
-    # tambah warn ke database
+    # add warn ke DB
     await db.add_warn(message.chat.id, user)
 
     data = await db.get_warn(message.chat.id, user)
-    count = data["count"] if date else 0
+
+    # FIX CRITICAL BUG
+    count = data["count"] if data else 0
 
     await message.reply(f"⚠️ Warn {count}/3")
 
