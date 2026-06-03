@@ -1,116 +1,223 @@
 from aiogram import Router, F
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton
+)
+
+from config import OWNER_ID
 
 router = Router()
 
 # =========================
-# MAIN /HELP MENU
+# HELP CONTENT (PAGES)
 # =========================
-@router.message(F.text == "/help")
-async def help_command(message: Message):
+PAGES = {
+    1: "📖 <b>ROSE HELP SYSTEM</b>\n\n"
+       "🤖 Group Manager Bot\n"
+       "⚙️ Anti spam • moderation • tools\n\n"
+       "👉 Gunakan tombol di bawah",
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+    2: "👮 <b>MODERATION</b>\n\n"
+       "🚫 /ban (reply)\n"
+       "👢 /kick (reply)\n"
+       "🔇 /mute (reply)\n"
+       "🔊 /unmute (reply)\n"
+       "⚠️ /warn (reply)",
+
+    3: "⚙️ <b>SETUP GUIDE</b>\n\n"
+       "1. Add bot\n"
+       "2. Make admin\n"
+       "3. Enable permissions\n"
+       "4. Done",
+
+    4: "🛠 <b>HOW TO USE</b>\n\n"
+       "👤 User join → follow rules\n"
+       "👮 Admin → moderation commands\n"
+       "👑 Owner → /panel",
+
+    5: "📊 <b>SYSTEM STATUS</b>\n\n"
+       "⚡ Online\n"
+       "🧠 Stable\n"
+       "🚀 Production mode"
+}
+
+TOTAL = len(PAGES)
+
+# =========================
+# MAIN KEYBOARD UI
+# =========================
+def main_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="👮 Moderation", callback_data="help_mod"),
-            InlineKeyboardButton(text="⚙️ Setup Bot", callback_data="help_setup")
+            InlineKeyboardButton(text="👮 Moderation", callback_data="h:mod"),
+            InlineKeyboardButton(text="⚙️ Setup", callback_data="h:setup")
         ],
         [
-            InlineKeyboardButton(text="📊 Stats", callback_data="stats_menu"),
-            InlineKeyboardButton(text="🛠 How to Use", callback_data="help_guide")
+            InlineKeyboardButton(text="🛠 Guide", callback_data="h:guide"),
+            InlineKeyboardButton(text="📊 Stats", callback_data="h:stats")
+        ],
+        [
+            InlineKeyboardButton(text="🤖 AI Help", callback_data="h:ai")
         ]
     ])
 
-    if message.chat.type == "private":
+# =========================
+# NAVIGATION KEYBOARD (PAGE)
+# =========================
+def page_keyboard(page: int):
+    nav = []
 
+    if page > 1:
+        nav.append(InlineKeyboardButton(text="⬅️ Prev", callback_data=f"p:{page-1}"))
+
+    if page < TOTAL:
+        nav.append(InlineKeyboardButton(text="Next ➡️", callback_data=f"p:{page+1}"))
+
+    buttons = []
+    if nav:
+        buttons.append(nav)
+
+    buttons.append([
+        InlineKeyboardButton(text="🏠 Home", callback_data="p:1")
+    ])
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+# =========================
+# /HELP ENTRY
+# =========================
+@router.message(F.text == "/help")
+async def help_start(message: Message):
+
+    await message.answer(
+        PAGES[1],
+        parse_mode="HTML",
+        reply_markup=main_keyboard()
+    )
+
+# =========================
+# PAGE NAVIGATION
+# =========================
+@router.callback_query(F.data.startswith("p:"))
+async def pages(callback: CallbackQuery):
+
+    page = int(callback.data.split(":")[1])
+
+    await callback.message.edit_text(
+        PAGES.get(page, PAGES[1]),
+        parse_mode="HTML",
+        reply_markup=page_keyboard(page)
+    )
+
+    await callback.answer()
+
+# =========================
+# MAIN MENU BUTTON HANDLERS
+# =========================
+@router.callback_query(F.data == "h:mod")
+async def mod(callback: CallbackQuery):
+
+    await callback.message.edit_text(
+        PAGES[2],
+        parse_mode="HTML",
+        reply_markup=main_keyboard()
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "h:setup")
+async def setup(callback: CallbackQuery):
+
+    await callback.message.edit_text(
+        PAGES[3],
+        parse_mode="HTML",
+        reply_markup=main_keyboard()
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "h:guide")
+async def guide(callback: CallbackQuery):
+
+    await callback.message.edit_text(
+        PAGES[4],
+        parse_mode="HTML",
+        reply_markup=main_keyboard()
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "h:stats")
+async def stats(callback: CallbackQuery):
+
+    await callback.message.edit_text(
+        PAGES[5],
+        parse_mode="HTML",
+        reply_markup=main_keyboard()
+    )
+    await callback.answer()
+
+# =========================
+# AI HELP MODE (SIMPLE)
+# =========================
+@router.callback_query(F.data == "h:ai")
+async def ai_help(callback: CallbackQuery):
+
+    await callback.message.edit_text(
+        "🤖 <b>AI HELP MODE</b>\n\n"
+        "Gunakan:\n"
+        "/aihelp ban\n"
+        "/aihelp mute\n"
+        "/aihelp setup\n\n"
+        "💡 Bot akan bantu jawab otomatis",
+        parse_mode="HTML",
+        reply_markup=main_keyboard()
+    )
+    await callback.answer()
+
+# =========================
+# SEARCH HELP SYSTEM
+# =========================
+SEARCH_DB = {
+    "ban": "🚫 /ban (reply user)",
+    "kick": "👢 /kick (reply user)",
+    "mute": "🔇 /mute (reply user)",
+    "warn": "⚠️ /warn (reply user, auto ban 3x)",
+    "setup": "⚙️ add bot → admin → enable permissions"
+}
+
+@router.message(F.text.startswith("/help "))
+async def search(message: Message):
+
+    query = message.text.replace("/help", "").strip().lower()
+
+    result = SEARCH_DB.get(query)
+
+    if result:
         await message.answer(
-            "📖 <b>ROSE BOT HELP CENTER</b>\n\n"
-            "👋 Welcome!\n\n"
-            "🤖 Bot ini adalah <b>Group Management Bot</b>\n"
-            "untuk mengelola Telegram group secara otomatis.\n\n"
-            "📌 Pilih menu di bawah untuk panduan lengkap:",
-            parse_mode="HTML",
-            reply_markup=keyboard
-        )
-
-    else:
-
-        await message.reply(
-            "📖 <b>ROSE HELP (GROUP MODE)</b>\n\n"
-            "👮 Moderation:\n"
-            "/ban /kick /mute /unmute /warn\n\n"
-            "⚙️ Setup:\n"
-            "/setwelcome /resetwelcome\n\n"
-            "📊 Stats:\n"
-            "/stats\n\n"
-            "💡 Tips:\n"
-            "Gunakan reply ke user saat pakai command",
+            f"🔎 <b>RESULT</b>\n\n{result}",
             parse_mode="HTML"
         )
+    else:
+        await message.answer(
+            "❌ Not found\n\nTry:\n/help ban\n/help mute\n/help setup"
+        )
 
 # =========================
-# MODERATION HELP (DETAILED)
+# ROLE HELP (OPTIONAL)
 # =========================
-@router.callback_query(F.data == "help_mod")
-async def help_mod(callback: CallbackQuery):
+def get_role(user_id: int):
+    if user_id == OWNER_ID:
+        return "owner"
+    return "user"
 
-    await callback.message.answer(
-        "👮 <b>MODERATION GUIDE</b>\n\n"
-        "📌 Cara pakai command:\n"
-        "➡️ Semua command HARUS reply ke user\n\n"
-        "🚫 /ban → Ban user dari group\n"
-        "👢 /kick → Keluarkan user (bisa masuk lagi)\n"
-        "🔇 /mute → Matikan chat user\n"
-        "🔊 /unmute → Aktifkan chat lagi\n"
-        "⚠️ /warn → Beri peringatan user\n\n"
-        "💡 Contoh:\n"
-        "Reply pesan user → ketik /ban",
-        parse_mode="HTML"
-    )
-    await callback.answer()
+@router.message(F.text == "/help_role")
+async def role_help(message: Message):
 
-# =========================
-# SETUP HELP (STEP BY STEP)
-# =========================
-@router.callback_query(F.data == "help_setup")
-async def help_setup(callback: CallbackQuery):
+    role = get_role(message.from_user.id)
 
-    await callback.message.answer(
-        "⚙️ <b>BOT SETUP GUIDE</b>\n\n"
-        "📌 Langkah wajib sebelum pakai bot:\n\n"
-        "1️⃣ Tambahkan bot ke group\n"
-        "2️⃣ Jadikan bot ADMIN\n"
-        "3️⃣ Aktifkan permission:\n"
-        "   • Delete messages\n"
-        "   • Ban users\n"
-        "   • Restrict users\n\n"
-        "4️⃣ Ketik /help di group\n\n"
-        "✅ Setelah itu bot langsung aktif\n\n"
-        "⚠️ Jika tidak di admin → bot tidak bisa kerja",
-        parse_mode="HTML"
-    )
-    await callback.answer()
+    if role == "owner":
+        text = "👑 OWNER\n/panel /broadcast /maintenance"
+    else:
+        text = "👤 USER\nJoin group & enjoy"
 
-# =========================
-# HOW TO USE (ANTI BINGUNG MODE)
-# =========================
-@router.callback_query(F.data == "help_guide")
-async def help_guide(callback: CallbackQuery):
-
-    await callback.message.answer(
-        "🛠 <b>HOW TO USE ROSE BOT</b>\n\n"
-        "📌 BOT INI BUKAN BOT CHAT BIASA\n"
-        "Tapi Group Manager Bot\n\n"
-        "👤 Untuk USER:\n"
-        "• Tinggal join group\n"
-        "• Ikuti rules group\n\n"
-        "👮 Untuk ADMIN:\n"
-        "• Gunakan /ban /mute /warn\n"
-        "• Reply ke user target\n\n"
-        "⚙️ Untuk OWNER:\n"
-        "• /panel untuk kontrol bot\n"
-        "• broadcast & maintenance\n\n"
-        "💡 Intinya:\n"
-        "Bot ini otomatis menjaga group dari spam & toxic",
-        parse_mode="HTML"
-    )
-    await callback.answer()
+    await message.answer(text)
