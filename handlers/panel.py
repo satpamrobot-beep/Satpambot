@@ -119,6 +119,80 @@ async def moderation_panel(
 
 
 # =========================
+# WARN SETTINGS
+# =========================
+
+@router.callback_query(
+    F.data == "mod_warns"
+)
+async def warns_panel(
+    call: CallbackQuery
+):
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+
+            [
+                InlineKeyboardButton(
+                    text="⚙ Set Limit",
+                    callback_data="warn_limit"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    text="🔨 Action",
+                    callback_data="warn_action"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    text="📜 Logs",
+                    callback_data="warn_logs"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    text="♻ Reset Config",
+                    callback_data="warn_reset_config"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    text="⬅ Back",
+                    callback_data="panel_mod"
+                )
+            ]
+        ]
+    )
+
+    await call.message.edit_text(
+        """
+⚠ Warn Settings
+
+Admin grup menentukan:
+
+• Warn limit
+• Punishment action
+• Logs
+• Reset config
+
+Commands:
+
+/warn
+/warns
+/resetwarn
+""",
+        reply_markup=keyboard
+    )
+
+    await call.answer()
+
+
+# =========================
 # PROTECTION
 # =========================
 
@@ -253,7 +327,6 @@ async def stats_panel(
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-
             [
                 InlineKeyboardButton(
                     text="👤 Users",
