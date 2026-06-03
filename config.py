@@ -9,6 +9,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_ID = os.getenv("OWNER_ID")
 DATABASE_URL = os.getenv("DATABASE_URL")
+MAINTENANCE_MODE = os.getenv("MAINTENANCE_MODE", "false").lower() == "true"
 
 # =========================
 # BOT USERNAME (WAJIB UNTUK BUTTON ADD GROUP)
