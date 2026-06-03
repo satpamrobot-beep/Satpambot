@@ -8,14 +8,31 @@ class Database:
     async def connect(self):
         self.pool = await asyncpg.create_pool(DATABASE_URL)
 
-    async def init(self):
+    # ================= USERS =================
+    async def add_user(self, user_id):
         async with self.pool.acquire() as conn:
             await conn.execute("""
-            CREATE TABLE IF NOT EXISTS warns (
-                user_id BIGINT,
-                chat_id BIGINT,
-                count INT DEFAULT 0
+                INSERT INTO users(user_id)
+                VALUES($1)
+                ON CONFLICT DO NOTHING
+            """, user_id)
+
+    # ================= GROUP SETTINGS =================
+    async def set_welcome(self, chat_id, text):
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO groups(chat_id, welcome)
+                VALUES($1, $2)
+                ON CONFLICT (chat_id)
+                DO UPDATE SET welcome=$2
+            """, chat_id, text)
+
+    async def get_welcome(self, chat_id):
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT welcome FROM groups WHERE chat_id=$1",
+                chat_id
             )
-            """)
+            return row["welcome"] if row else None
 
 db = Database()
