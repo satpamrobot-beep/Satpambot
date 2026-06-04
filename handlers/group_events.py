@@ -21,97 +21,51 @@ async def bot_added_to_group(message: Message):
 
             chat = message.chat
 
-            # simpan group ke DB
             await db.add_group(
-                chat_id=chat.id,
-                title=chat.title,
-                owner_id=message.from_user.id
+                chat.id,
+                chat.title,
+                message.from_user.id
             )
 
             await message.reply(
-"""
-👋 Terima kasih sudah menambahkan bot!
-
-⚠ STEP PENTING:
-👉 Jadikan bot ADMIN agar semua fitur aktif
-
-📌 Setelah itu panel akan terbuka otomatis
-"""
+                "👋 Terima kasih sudah menambahkan bot!\n\n"
+                "⚠ Jadikan bot ADMIN agar semua fitur aktif"
             )
 
 
 # =========================
-# DETEKSI STATUS BOT DI GROUP
+# BOT STATUS CHANGE
 # =========================
 @router.chat_member()
 async def bot_status_update(event: ChatMemberUpdated):
 
     bot_id = (await event.bot.get_me()).id
 
-    # hanya proses kalau perubahan untuk bot sendiri
     if event.new_chat_member.user.id != bot_id:
         return
 
-    chat = event.chat
+    chat_id = event.chat.id
     status = event.new_chat_member.status
 
-    # =========================
-    # BOT JADI ADMIN / CREATOR
-    # =========================
-    if status in [
-        ChatMemberStatus.ADMINISTRATOR,
-        ChatMemberStatus.CREATOR
-    ]:
-
-        async with db.pool.acquire() as conn:
-            await conn.execute(
-                """
-                UPDATE groups
-                SET is_admin = TRUE
-                WHERE chat_id = $1
-                """,
-                chat.id
-            )
+    # BOT JADI ADMIN
+    if status in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]:
 
         await event.bot.send_message(
-            chat.id,
-"""
-✅ BOT SUDAH ADMIN
-
-⚙ Panel sekarang AKTIF
-Ketik /panel atau tekan tombol panel
-"""
+            chat_id,
+            "✅ Bot sudah ADMIN\n⚙ Panel aktif sekarang"
         )
 
-
-    # =========================
-    # BOT DITURUNKAN / DIKELUARKAN
-    # =========================
+    # BOT BUKAN ADMIN / MEMBER
     elif status == ChatMemberStatus.MEMBER:
 
-        async with db.pool.acquire() as conn:
-            await conn.execute(
-                """
-                UPDATE groups
-                SET is_admin = FALSE
-                WHERE chat_id = $1
-                """,
-                chat.id
-            )
-
         await event.bot.send_message(
-            chat.id,
-"""
-⚠ BOT TIDAK LAGI ADMIN
-
-❌ Panel terkunci
-👉 Jadikan bot admin lagi untuk mengaktifkan fitur
-"""
+            chat_id,
+            "⚠ Bot bukan admin\n❌ Fitur nonaktif"
         )
 
 
 # =========================
-# OPTIONAL: BOT LEFT GROUP
+# BOT LEFT GROUP
 # =========================
 @router.message(F.left_chat_member)
 async def bot_left_group(message: Message):
@@ -121,9 +75,6 @@ async def bot_left_group(message: Message):
     if message.left_chat_member.id == bot_id:
 
         await message.reply(
-"""
-👋 Bot telah dikeluarkan dari group
-
-📌 Kita tetap stay jika kamu butuh lagi😚
-"""
+            "👋 Bot telah dikeluarkan dari group\n\n"
+            "💔 Jika butuh, tinggal add lagi ya"
         )
