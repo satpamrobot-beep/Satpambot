@@ -1,12 +1,12 @@
 from aiogram import Router, F
 from aiogram.types import Message
+from database import db
 
 router = Router()
 
-welcome_text = {}
 
 # =========================
-# NEW MEMBER HANDLER (SINGLE ENTRY)
+# NEW MEMBER HANDLER
 # =========================
 @router.message(F.new_chat_members)
 async def new_member(message: Message):
@@ -15,6 +15,7 @@ async def new_member(message: Message):
 
         # ================= BOT JOIN =================
         if user.is_bot:
+
             await message.answer(
                 "🤖 Bot berhasil ditambahkan!\n\n"
                 "⚙️ Langkah setup:\n"
@@ -24,13 +25,19 @@ async def new_member(message: Message):
             )
             return
 
-        # ================= USER JOIN =================
-        text = welcome_text.get(
-            message.chat.id,
-            "👋 Welcome {user} to the group!"
+        # ================= GET WELCOME FROM DB =================
+        row = await db.get_group(message.chat.id)
+
+        text = (
+            row["welcome"]
+            if row and row["welcome"]
+            else "👋 Welcome {user} to the group!"
         )
 
-        await message.answer(text.replace("{user}", user.full_name))
+        await message.answer(
+            text.replace("{user}", user.full_name)
+        )
+
 
 # =========================
 # SET WELCOME
@@ -39,8 +46,19 @@ async def new_member(message: Message):
 async def setwelcome(message: Message):
 
     if not message.reply_to_message:
-        return await message.reply("❌ Reply pesan untuk dijadikan welcome")
+        return await message.reply(
+            "❌ Reply pesan untuk dijadikan welcome"
+        )
 
-    welcome_text[message.chat.id] = message.reply_to_message.text
+    async with db.pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE groups
+            SET welcome = $1
+            WHERE chat_id = $2
+            """,
+            message.reply_to_message.text,
+            message.chat.id
+        )
 
     await message.reply("✅ Welcome message saved")
