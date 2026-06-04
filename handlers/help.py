@@ -14,33 +14,31 @@ router = Router()
 # HELP CONTENT (PAGES)
 # =========================
 PAGES = {
-    1: "📖 <b>ROSE HELP SYSTEM</b>\n\n"
-       "🤖 Group Manager Bot\n"
-       "⚙️ Anti spam • moderation • tools\n\n"
-       "👉 Gunakan tombol di bawah",
+    1: "📚 <b>Pusat Bantuan</b>\n\n"
+       "Pilih kategori bantuan menggunakan tombol di bawah.",
 
-    2: "👮 <b>MODERATION</b>\n\n"
-       "🚫 /ban (reply)\n"
-       "👢 /kick (reply)\n"
-       "🔇 /mute (reply)\n"
-       "🔊 /unmute (reply)\n"
-       "⚠️ /warn (reply)",
+    2: "👮 <b>Moderasi</b>\n\n"
+       "🚫 /ban\n"
+       "👢 /kick\n"
+       "🔇 /mute\n"
+       "🔊 /unmute\n"
+       "⚠️ /warn",
 
-    3: "⚙️ <b>SETUP GUIDE</b>\n\n"
-       "1. Add bot\n"
-       "2. Make admin\n"
-       "3. Enable permissions\n"
-       "4. Done",
+    3: "⚙️ <b>Pengaturan</b>\n\n"
+       "1. Tambahkan bot ke grup\n"
+       "2. Jadikan Admin\n"
+       "3. Berikan izin yang diperlukan\n"
+       "4. Selesai",
 
-    4: "🛠 <b>HOW TO USE</b>\n\n"
-       "👤 User join → follow rules\n"
-       "👮 Admin → moderation commands\n"
-       "👑 Owner → /panel",
+    4: "🛠 <b>Panduan</b>\n\n"
+       "👤 Anggota menggunakan fitur grup\n"
+       "👮 Admin menggunakan perintah moderasi\n"
+       "👑 Owner menggunakan /panel",
 
-    5: "📊 <b>SYSTEM STATUS</b>\n\n"
-       "⚡ Online\n"
-       "🧠 Stable\n"
-       "🚀 Production mode"
+    5: "📊 <b>Status Sistem</b>\n\n"
+       "✅ Online\n"
+       "⚡ Stabil\n"
+       "🚀 Siap digunakan"
 }
 
 TOTAL = len(PAGES)
@@ -196,6 +194,33 @@ async def search(message: Message):
         await message.answer(
             "❌ Not found\n\nTry:\n/help ban\n/help mute\n/help setup"
         )
+
+# =========================
+# START MENU CALLBACKS
+# =========================
+
+@router.callback_query(F.data == "help_menu")
+async def open_help(callback: CallbackQuery):
+
+    await callback.message.edit_text(
+        PAGES[1],
+        parse_mode="HTML",
+        reply_markup=main_keyboard()
+    )
+
+    await callback.answer()
+
+
+@router.callback_query(F.data == "bot_stats")
+async def open_stats(callback: CallbackQuery):
+
+    await callback.message.edit_text(
+        PAGES[5],
+        parse_mode="HTML",
+        reply_markup=main_keyboard()
+    )
+
+    await callback.answer()
 
 # =========================
 # ROLE HELP
