@@ -27,10 +27,34 @@ async def bot_added_to_group(message: Message):
                 message.from_user.id
             )
 
+            # ORIGINAL MESSAGE (tetap)
             await message.reply(
                 "👋 Terima kasih sudah menambahkan bot!\n\n"
                 "⚠ Jadikan bot ADMIN agar semua fitur aktif"
             )
+
+            # =========================
+            # SILENT CLEAN MODE (TAMBAHAN)
+            # =========================
+            try:
+                await message.delete()
+            except:
+                pass
+
+            # OPTIONAL LOG (kalau kamu mau)
+            try:
+                async with db.pool.acquire() as conn:
+                    await conn.execute(
+                        """
+                        INSERT INTO join_leave_logs(chat_id, user_id, action)
+                        VALUES($1,$2,$3)
+                        """,
+                        chat.id,
+                        message.from_user.id,
+                        "bot_join"
+                    )
+            except:
+                pass
 
 
 # =========================
@@ -74,7 +98,31 @@ async def bot_left_group(message: Message):
 
     if message.left_chat_member.id == bot_id:
 
+        # ORIGINAL MESSAGE (tetap)
         await message.reply(
             "👋 Bot telah dikeluarkan dari group\n\n"
             "💔 Jika butuh, tinggal add lagi ya"
         )
+
+        # =========================
+        # SILENT CLEAN MODE (TAMBAHAN)
+        # =========================
+        try:
+            await message.delete()
+        except:
+            pass
+
+        # OPTIONAL LOG
+        try:
+            async with db.pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO join_leave_logs(chat_id, user_id, action)
+                    VALUES($1,$2,$3)
+                    """,
+                    message.chat.id,
+                    message.from_user.id,
+                    "bot_left"
+                )
+        except:
+            pass
