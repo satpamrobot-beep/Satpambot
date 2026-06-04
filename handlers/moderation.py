@@ -174,26 +174,61 @@ async def warn_user(message: Message):
         return
 
     if not await is_admin(message):
-        return await message.reply(err("Admin only"))
+        return await message.reply(
+            err("Admin only")
+        )
 
     user = get_target(message)
+
     if not user:
-        return await message.reply(warn("Reply user untuk warn"))
+        return await message.reply(
+            warn("Reply user untuk warn")
+        )
 
-    # add warn ke DB
-    await db.add_warn(message.chat.id, user)
+    target = await message.bot.get_chat_member(
+        message.chat.id,
+        user
+    )
 
-    data = await db.get_warn(message.chat.id, user)
+    if target.status in [
+        ChatMemberStatus.ADMINISTRATOR,
+        ChatMemberStatus.CREATOR
+    ]:
+        return await message.reply(
+            err("Tidak bisa warn admin")
+        )
 
-    # FIX CRITICAL BUG
-    count = data["count"] if data else 0
+    await db.add_warn(
+        message.chat.id,
+        user
+    )
 
-    await message.reply(f"⚠️ Warn {count}/3")
+    count = await db.get_warn(
+        message.chat.id,
+        user
+    )
 
-    # auto ban
+    await message.reply(
+        f"⚠️ Warn {count}/3"
+    )
+
     if count >= 3:
-        await message.bot.ban_chat_member(message.chat.id, user)
-        await db.reset_warn(message.chat.id, user)
 
-        await message.reply("🚫 Auto banned (3 warn)")
-        await message.bot.send_message(message.chat.id, "User diban karena 3 warning")
+        await message.bot.ban_chat_member(
+            message.chat.id,
+            user
+        )
+
+        await db.reset_warn(
+            message.chat.id,
+            user
+        )
+
+        await message.reply(
+            "🚫 Auto banned (3 warn)"
+        )
+
+        await message.bot.send_message(
+            message.chat.id,
+            "🚫 User diban karena mencapai 3 warning"
+        )
