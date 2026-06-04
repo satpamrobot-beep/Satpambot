@@ -1,110 +1,129 @@
-import asyncio
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, ChatMemberUpdated
+from aiogram.enums import ChatMemberStatus
 
-from config import OWNER_ID
 from database import db
 
 router = Router()
 
-# ================= OWNER CHECK =================
-def is_owner(user_id: int):
-    return user_id == OWNER_ID
 
-# ================= PANEL =================
-@router.message(F.text == "/panel")
-async def panel(message: Message):
+# =========================
+# BOT JOIN GROUP
+# =========================
+@router.message(F.new_chat_members)
+async def bot_added_to_group(message: Message):
 
-    if not is_owner(message.from_user.id):
-        return await message.reply("❌ No access")
+    bot_id = (await message.bot.get_me()).id
 
-    status = await db.get_setting("maintenance")  # dari DB
+    for member in message.new_chat_members:
 
-    status_text = "🔴 ON" if status else "🟢 OFF"
+        if member.id == bot_id:
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(
-                text=f"🔧 Maintenance: {status_text}",
-                callback_data="toggle_maintenance"
+            chat = message.chat
+
+            # simpan group ke DB
+            await db.add_group(
+                chat_id=chat.id,
+                title=chat.title,
+                owner_id=message.from_user.id
             )
-        ],
-        [
-            InlineKeyboardButton(text="📢 Broadcast", callback_data="broadcast_menu"),
-            InlineKeyboardButton(text="📊 Stats", callback_data="stats_menu")
-        ]
-    ])
 
-    await message.answer(
-        "🛠 <b>ROSE PRO PANEL</b>\n\nControl Center",
-        parse_mode="HTML",
-        reply_markup=keyboard
-    )
+            await message.reply(
+"""
+👋 Terima kasih sudah menambahkan bot!
 
-# ================= TOGGLE MAINTENANCE (DB VERSION) =================
-@router.callback_query(F.data == "toggle_maintenance")
-async def toggle_maintenance(callback: CallbackQuery):
+⚠ STEP PENTING:
+👉 Jadikan bot ADMIN agar semua fitur aktif
 
-    if not is_owner(callback.from_user.id):
-        return await callback.answer("No access", show_alert=True)
+📌 Setelah itu panel akan terbuka otomatis
+"""
+            )
 
-    current = await db.get_setting("maintenance")
-    new_status = not current
 
-    await db.set_setting("maintenance", new_status)
+# =========================
+# DETEKSI STATUS BOT DI GROUP
+# =========================
+@router.chat_member()
+async def bot_status_update(event: ChatMemberUpdated):
 
-    status_text = "ON 🔴" if new_status else "OFF 🟢"
+    bot_id = (await event.bot.get_me()).id
 
-    await callback.message.edit_text(
-        f"🛠 <b>MAINTENANCE</b>\nStatus: {status_text}",
-        parse_mode="HTML"
-    )
-
-    await callback.answer("Updated")
-
-# ================= STATS =================
-@router.callback_query(F.data == "stats_menu")
-async def stats(callback: CallbackQuery):
-
-    if not is_owner(callback.from_user.id):
-        return await callback.answer("No access", show_alert=True)
-
-    users = await db.count_users()
-    groups = await db.count_groups()
-
-    await callback.message.edit_text(
-        "📊 <b>REAL STATS</b>\n\n"
-        f"👤 Users: {users}\n"
-        f"👥 Groups: {groups}",
-        parse_mode="HTML"
-    )
-
-    await callback.answer()
-
-# ================= BROADCAST =================
-@router.message(F.text.startswith("/broadcast"))
-async def broadcast(message: Message, bot):
-
-    if not is_owner(message.from_user.id):
+    # hanya proses kalau perubahan untuk bot sendiri
+    if event.new_chat_member.user.id != bot_id:
         return
 
-    text = message.text.replace("/broadcast", "").strip()
+    chat = event.chat
+    status = event.new_chat_member.status
 
-    if not text:
-        return await message.reply("Usage: /broadcast <text>")
+    # =========================
+    # BOT JADI ADMIN / CREATOR
+    # =========================
+    if status in [
+        ChatMemberStatus.ADMINISTRATOR,
+        ChatMemberStatus.CREATOR
+    ]:
 
-    users = await db.get_all_users() or []
+        async with db.pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE groups
+                SET is_admin = TRUE
+                WHERE chat_id = $1
+                """,
+                chat.id
+            )
 
-    msg = await message.reply("📢 Sending broadcast...")
+        await event.bot.send_message(
+            chat.id,
+"""
+✅ BOT SUDAH ADMIN
 
-    sent = 0
+⚙ Panel sekarang AKTIF
+Ketik /panel atau tekan tombol panel
+"""
+        )
 
-    for user_id in users:
-        try:
-            await bot.send_message(user_id, f"📢 {text}")
-            sent += 1
-            await asyncio.sleep(0.03)
-        except:
-            continue
 
-    await msg.edit_text(f"✅ Sent to {sent} users")
+    # =========================
+    # BOT DITURUNKAN / DIKELUARKAN
+    # =========================
+    elif status == ChatMemberStatus.MEMBER:
+
+        async with db.pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE groups
+                SET is_admin = FALSE
+                WHERE chat_id = $1
+                """,
+                chat.id
+            )
+
+        await event.bot.send_message(
+            chat.id,
+"""
+⚠ BOT TIDAK LAGI ADMIN
+
+❌ Panel terkunci
+👉 Jadikan bot admin lagi untuk mengaktifkan fitur
+"""
+        )
+
+
+# =========================
+# OPTIONAL: BOT LEFT GROUP
+# =========================
+@router.message(F.left_chat_member)
+async def bot_left_group(message: Message):
+
+    bot_id = (await message.bot.get_me()).id
+
+    if message.left_chat_member.id == bot_id:
+
+        await message.reply(
+"""
+👋 Bot telah dikeluarkan dari group
+
+📌 Kita tetap stay jika kamu butuh lagi😚
+"""
+        )
