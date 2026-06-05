@@ -1810,6 +1810,9 @@ async def cleanup_task():
 # =========================
 async def main():
 
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN tidak ditemukan")
+
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
 
@@ -1818,48 +1821,32 @@ async def main():
     await init_db()
 
     # =========================
-    # START BACKGROUND TASK
+    # BACKGROUND TASK
     # =========================
     asyncio.create_task(cleanup_task())
 
     print("🔥 BOT STARTED")
 
     # =========================
-    # START BOT POLLING
+    # BOT POLLING TASK
     # =========================
     polling_task = asyncio.create_task(dp.start_polling(bot))
 
     # =========================
-    # START WEBHOOK SERVER (BAYAR.GG)
+    # WEB SERVER (FASTAPI + UVICORN)
     # =========================
-    import uvicorn
-    from fastapi import FastAPI, Request
+    config = uvicorn.Config(
+        app,
+        host="0.0.0.0",
+        port=8000,
+        log_level="warning"
+    )
 
-    app = FastAPI()
-
-    @app.post("/webhook")
-    async def webhook(request: Request):
-
-        data = await request.json()
-
-        order_id = data.get("order_id")
-        status = data.get("status")
-        amount = data.get("amount")
-
-        if status == "paid":
-            print("💰 PAYMENT SUCCESS:", order_id, amount)
-
-            # nanti kita sambungkan ke wallet / code unlock
-
-        return {"ok": True}
-
-    config = uvicorn.Config(app, host="0.0.0.0", port=8000)
     server = uvicorn.Server(config)
-
     webhook_task = asyncio.create_task(server.serve())
 
     # =========================
-    # RUN BOTH TOGETHER
+    # RUN TOGETHER
     # =========================
     try:
         await asyncio.gather(
