@@ -10,7 +10,9 @@ import asyncpg
 import time
 import asyncio
 import random
+import uvicorn
 
+from fastapi import FastAPI, Request
 from dotenv import load_dotenv
 from aiogram.filters import CommandStart
 from aiogram import Bot, Dispatcher, Router, F
@@ -120,6 +122,7 @@ user_states = {}
 last_edit_time = {}
 user_last_action = {}
 force_cache = {}
+app = FastAPI()
 
 # key = (user_id, channel)
 # value = (status, expire_time)
@@ -251,7 +254,26 @@ def force_kb():
         ]
     )
 
+# ===============
+# API WEBHOOK
+# ===============
 
+@app.post("/webhook")
+async def webhook(request: Request):
+
+    data = await request.json()
+
+    order_id = data.get("order_id")
+    status = data.get("status")
+    amount = data.get("amount")
+
+    if status == "paid":
+        print("💰 PAYMENT SUCCESS:", order_id, amount)
+
+        # nanti kita sambungkan ke wallet + unlock code
+
+    return {"ok": True}
+    
 # =========================
 # START
 # =========================
@@ -1798,24 +1820,57 @@ async def main():
     # =========================
     # START BACKGROUND TASK
     # =========================
-    asyncio.create_task(
-        cleanup_task()
-    )
+    asyncio.create_task(cleanup_task())
 
     print("🔥 BOT STARTED")
 
+    # =========================
+    # START BOT POLLING
+    # =========================
+    polling_task = asyncio.create_task(dp.start_polling(bot))
+
+    # =========================
+    # START WEBHOOK SERVER (BAYAR.GG)
+    # =========================
+    import uvicorn
+    from fastapi import FastAPI, Request
+
+    app = FastAPI()
+
+    @app.post("/webhook")
+    async def webhook(request: Request):
+
+        data = await request.json()
+
+        order_id = data.get("order_id")
+        status = data.get("status")
+        amount = data.get("amount")
+
+        if status == "paid":
+            print("💰 PAYMENT SUCCESS:", order_id, amount)
+
+            # nanti kita sambungkan ke wallet / code unlock
+
+        return {"ok": True}
+
+    config = uvicorn.Config(app, host="0.0.0.0", port=8000)
+    server = uvicorn.Server(config)
+
+    webhook_task = asyncio.create_task(server.serve())
+
+    # =========================
+    # RUN BOTH TOGETHER
+    # =========================
     try:
-        await dp.start_polling(bot)
-
-    except Exception as e:
-
-        print(
-            "❌ BOT ERROR:",
-            e
+        await asyncio.gather(
+            polling_task,
+            webhook_task
         )
 
-    finally:
+    except Exception as e:
+        print("❌ BOT ERROR:", e)
 
+    finally:
         print("💀 SHUTDOWN...")
 
         if db_pool:
