@@ -1813,11 +1813,20 @@ async def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN tidak ditemukan")
 
-    bot = Bot(token=BOT_TOKEN)
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL tidak ditemukan")
+
+    # =========================
+    # INIT BOT
+    # =========================
+    bot = Bot(BOT_TOKEN)
     dp = Dispatcher()
 
     dp.include_router(router)
 
+    # =========================
+    # DATABASE
+    # =========================
     await init_db()
 
     # =========================
@@ -1828,42 +1837,61 @@ async def main():
     print("🔥 BOT STARTED")
 
     # =========================
-    # BOT POLLING TASK
+    # PORT RAILWAY
     # =========================
-    polling_task = asyncio.create_task(dp.start_polling(bot))
+    port = int(os.getenv("PORT", 8000))
 
     # =========================
-    # WEB SERVER (FASTAPI + UVICORN)
+    # UVICORN
     # =========================
     config = uvicorn.Config(
-        app,
+        app=app,
         host="0.0.0.0",
-        port=8000,
-        log_level="warning"
+        port=port,
+        log_level="info"
     )
 
     server = uvicorn.Server(config)
-    webhook_task = asyncio.create_task(server.serve())
 
     # =========================
-    # RUN TOGETHER
+    # RUN BOT + API
     # =========================
+    polling_task = asyncio.create_task(
+        dp.start_polling(bot)
+    )
+
+    api_task = asyncio.create_task(
+        server.serve()
+    )
+
     try:
         await asyncio.gather(
             polling_task,
-            webhook_task
+            api_task
         )
 
     except Exception as e:
         print("❌ BOT ERROR:", e)
 
     finally:
-        print("💀 SHUTDOWN...")
 
-        if db_pool:
-            await db_pool.close()
+        print("💀 SHUTDOWN")
 
-        await bot.session.close()
+        polling_task.cancel()
+        api_task.cancel()
+
+        try:
+            if db_pool:
+                await db_pool.close()
+        except Exception:
+            pass
+
+        try:
+            await bot.session.close()
+        except Exception:
+            pass
+
+
 # =========================
 # RUN
 # =========================
