@@ -2,25 +2,26 @@
 # IMPORT
 # =========================
 
+# Standard Library
 import os
 import re
 import time
-import asyncio
 import json
 import hmac
 import hashlib
-import httpx
-import asyncio
 import random
 import secrets
 import string
-import uvicorn
-import asyncpg
-
+import asyncio
 from datetime import datetime, timedelta
-from fastapi import Request
-from fastapi import FastAPI, Request
+
+# Third Party
+import httpx
+import asyncpg
+import uvicorn
 from dotenv import load_dotenv
+
+from fastapi import FastAPI, Request
 
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.filters import CommandStart
@@ -34,37 +35,106 @@ from aiogram.types import (
     InlineKeyboardButton,
     InputMediaPhoto,
     InputMediaVideo,
-    InputMediaDocument
+    InputMediaDocument,
 )
 
 from aiogram.exceptions import (
     TelegramBadRequest,
     TelegramRetryAfter
 )
+
 # =========================
-# CONFIG
+# LOAD ENV
 # =========================
 
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-DATABASE_URL = os.getenv("DATABASE_URL")
+# =========================
+# CORE CONFIG
+# =========================
 
-CHANNEL_DB = os.getenv("CHANNEL_DB")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+CHANNEL_DB = os.getenv("CHANNEL_DB", "").strip()
 
-ADMINS = set(
-    int(x)
-    for x in os.getenv("ADMINS", "").split(",")
-    if x.strip().isdigit()
-)
-PAYGG_SECRET = os.getenv("PAYGG_SECRET")
-PAYGG_API_KEY = os.getenv("PAYGG_API_KEY")
-UPDATE_CHANNEL = os.getenv("UPDATE_CHANNEL")
-NOTIFICATION_CHANNEL = int(os.getenv("NOTIFICATION_CHANNEL", 0))
-VIP_LINK = os.getenv("VIP_LINK")
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN tidak ditemukan")
+
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL tidak ditemukan")
 
 # =========================
-# DB POOL
+# PAYMENT CONFIG
+# =========================
+
+PAYGG_SECRET = os.getenv("PAYGG_SECRET", "").strip()
+PAYGG_API_KEY = os.getenv("PAYGG_API_KEY", "").strip()
+
+# =========================
+# OPTIONAL CONFIG
+# =========================
+
+UPDATE_CHANNEL = os.getenv("UPDATE_CHANNEL", "").strip()
+VIP_LINK = os.getenv("VIP_LINK", "").strip()
+
+# =========================
+# SAFE ENV PARSER
+# =========================
+
+def get_int_env(name: str, default: int = 0) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+NOTIFICATION_CHANNEL = get_int_env("NOTIFICATION_CHANNEL")
+
+# =========================
+# ADMINS
+# =========================
+
+ADMINS: set[int] = set()
+
+_raw_admins = os.getenv("ADMINS", "")
+
+if _raw_admins:
+    for admin_id in _raw_admins.split(","):
+        admin_id = admin_id.strip()
+
+        if admin_id.isdigit():
+            ADMINS.add(int(admin_id))
+
+# =========================
+# HELPERS
+# =========================
+
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMINS
+
+
+def generate_code(length: int = 10) -> str:
+    chars = string.ascii_uppercase + string.digits
+
+    return "".join(
+        secrets.choice(chars)
+        for _ in range(length)
+    )
+
+
+def generate_order_id() -> str:
+    return (
+        "INV-"
+        + datetime.now().strftime("%Y%m%d")
+        + "-"
+        + secrets.token_hex(4).upper()
+    )
+
+
+def rupiah(amount: int) -> str:
+    return f"Rp {amount:,}".replace(",", ".")
+
+# =========================
+# DATABASE
 # =========================
 
 db_pool: asyncpg.Pool | None = None
@@ -73,12 +143,15 @@ db_pool: asyncpg.Pool | None = None
 async def init_db():
     global db_pool
 
+    if db_pool:
+        return
+
     db_pool = await asyncpg.create_pool(
         DATABASE_URL,
         min_size=2,
-        max_size=5,
-        statement_cache_size=0,
-        command_timeout=15
+        max_size=10,
+        command_timeout=30,
+        statement_cache_size=0
     )
 
     async with db_pool.acquire() as conn:
@@ -89,40 +162,10 @@ async def init_db():
             username TEXT,
             fullname TEXT,
             created_at TIMESTAMP DEFAULT NOW()
-        );
+        )
+        """)
 
-        CREATE TABLE IF NOT EXISTS codes(
-            id SERIAL PRIMARY KEY,
-            code TEXT UNIQUE,
-            owner_id BIGINT,
-            buyer_id BIGINT,
-            price BIGINT DEFAULT 0,
-            is_paid BOOLEAN DEFAULT FALSE,
-            total_media INT,
-            total_size BIGINT,
-            created_at TIMESTAMP DEFAULT NOW()
-        );
-
-        CREATE TABLE IF NOT EXISTS medias(
-            id SERIAL PRIMARY KEY,
-            code TEXT,
-            file_id TEXT,
-            file_type TEXT,
-            file_size BIGINT
-        );
-
-        CREATE TABLE IF NOT EXISTS transactions(
-            id SERIAL PRIMARY KEY,
-            order_id TEXT UNIQUE,
-            user_id BIGINT,
-            code TEXT,
-            amount BIGINT,
-            fee BIGINT,
-            net BIGINT,
-            status TEXT DEFAULT 'pending',
-            created_at TIMESTAMP DEFAULT NOW()
-        );
-
+        await conn.execute("""
         CREATE TABLE IF NOT EXISTS wallets(
             user_id BIGINT PRIMARY KEY,
             saldo BIGINT DEFAULT 0,
@@ -130,8 +173,49 @@ async def init_db():
             total_process BIGINT DEFAULT 0,
             total_failed BIGINT DEFAULT 0,
             total_success BIGINT DEFAULT 0
-        );
+        )
         """)
+
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS codes(
+            id SERIAL PRIMARY KEY,
+            code TEXT UNIQUE,
+            owner_id BIGINT,
+            buyer_id BIGINT,
+            price BIGINT DEFAULT 0,
+            is_paid BOOLEAN DEFAULT FALSE,
+            total_media INT DEFAULT 0,
+            total_size BIGINT DEFAULT 0,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+        """)
+
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS medias(
+            id SERIAL PRIMARY KEY,
+            code TEXT,
+            file_id TEXT,
+            file_type TEXT,
+            file_size BIGINT DEFAULT 0
+        )
+        """)
+
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS transactions(
+            id SERIAL PRIMARY KEY,
+            order_id TEXT UNIQUE,
+            user_id BIGINT,
+            code TEXT,
+            amount BIGINT,
+            fee BIGINT DEFAULT 0,
+            net BIGINT DEFAULT 0,
+            status TEXT DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+        """)
+
+    print("✅ Database Ready")
+
 # =========================
 # CACHE / MEMORY
 # =========================
@@ -143,15 +227,28 @@ cooldown = {
 
 page_history = {}
 page_cooldown = {}
+
 user_click_lock = {}
 upload_sessions = {}
 user_states = {}
+
 last_edit_time = {}
 user_last_action = {}
+
 force_cache = {}
 
-app = FastAPI()
+broadcast_running = False
+payment_cache = {}
 
+user_upload_lock = {}
+user_download_lock = {}
+
+
+# =========================
+# APP
+# =========================
+
+app = FastAPI()
 # =========================
 # ANTI SPAM + RATE LIMIT SYSTEM
 # =========================
@@ -202,11 +299,11 @@ async def safe_send(func, *args, **kwargs):
             await asyncio.sleep(e.retry_after + 1)
 
         except TelegramBadRequest as e:
-            print("BAD REQUEST:", e)
+            print(f"[BAD_REQUEST] {e}")
             return None
 
         except Exception as e:
-            print(f"ERROR attempt {attempt+1}:", e)
+            print(f"[ERROR] attempt {attempt + 1}: {e}")
             await asyncio.sleep(1 + attempt)
 
     return None
@@ -217,7 +314,12 @@ async def safe_send(func, *args, **kwargs):
 # =========================
 
 router = Router()
-    
+
+
+# =========================
+# KEYBOARD
+# =========================
+
 def get_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -248,11 +350,12 @@ def get_keyboard():
 FORCE_CHANNEL = -1003712587847
 FORCE_CHANNEL_LINK = "https://t.me/+3g_yhHwxCrc5ZTg9"
 
+
 # =========================
 # CHECK FORCE SUB
 # =========================
 
-async def check_force_sub(bot: Bot, user_id: int, channel=FORCE_CHANNEL):
+async def check_force_sub(bot: Bot, user_id: int, channel: int = FORCE_CHANNEL) -> bool:
     try:
         member = await bot.get_chat_member(
             chat_id=channel,
@@ -262,7 +365,7 @@ async def check_force_sub(bot: Bot, user_id: int, channel=FORCE_CHANNEL):
         return member.status in ("member", "administrator", "creator")
 
     except Exception as e:
-        print("FORCE SUB ERROR:", e)
+        print(f"[FORCE_SUB ERROR] {e}")
         return False
 
 
@@ -287,10 +390,10 @@ def force_kb():
             ]
         ]
     )
-
 # =========================
 # VERIFY SIGNATURE
 # =========================
+
 def verify_signature(raw_body: bytes, signature: str) -> bool:
     if not PAYGG_SECRET:
         return True
@@ -305,15 +408,20 @@ def verify_signature(raw_body: bytes, signature: str) -> bool:
 
 
 # =========================
-# CREATE QRIS INVOICE (5 MIN EXPIRE)
+# CREATE QRIS
 # =========================
-async def create_qris(order_id: str, amount: int):
-    expires_at = datetime.utcnow() + timedelta(minutes=5)
 
-    async with httpx.AsyncClient(timeout=10) as client:
-        res = await client.post(
+async def create_qris(order_id: str, amount: int):
+
+    expires_at = datetime.now() + timedelta(minutes=5)
+
+    async with httpx.AsyncClient(timeout=15) as client:
+
+        response = await client.post(
             "https://api.paygg.example/create-invoice",
-            headers={"Authorization": f"Bearer {PAYGG_API_KEY}"},
+            headers={
+                "Authorization": f"Bearer {PAYGG_API_KEY}"
+            },
             json={
                 "order_id": order_id,
                 "amount": amount,
@@ -322,64 +430,85 @@ async def create_qris(order_id: str, amount: int):
             }
         )
 
-    data = res.json()
+        response.raise_for_status()
+
+        data = response.json()
 
     return {
+        "order_id": order_id,
         "qr_url": data.get("qr_url"),
-        "expires_at": expires_at,
-        "order_id": order_id
+        "expires_at": expires_at
     }
 
 
 # =========================
-# SEND QR (EMBED DI BOT)
+# SEND QR
 # =========================
-async def send_qr(user_id, qr_url, caption):
-    msg = await bot.send_photo(
+
+async def send_qr(
+    user_id: int,
+    qr_url: str,
+    caption: str
+) -> int:
+
+    msg = await safe_send(
+        bot.send_photo,
         chat_id=user_id,
         photo=qr_url,
         caption=caption
     )
-    return msg.message_id
+
+    return msg.message_id if msg else 0
 
 
 # =========================
-# AUTO DELETE EXPIRED QR
+# QR EXPIRE WATCHER
 # =========================
+
 async def qr_expire_watcher():
+
     while True:
-        async with db_pool.acquire() as conn:
 
-            expired = await conn.fetch(
-                """
-                SELECT user_id, message_id, order_id
-                FROM payments
-                WHERE status='pending'
-                AND expires_at < NOW()
-                """
-            )
+        try:
 
-            for p in expired:
+            async with db_pool.acquire() as conn:
 
-                try:
-                    await bot.delete_message(
-                        chat_id=p["user_id"],
-                        message_id=p["message_id"]
-                    )
-                except:
-                    pass
+                rows = await conn.fetch("""
+                    SELECT
+                        order_id,
+                        user_id,
+                        message_id
+                    FROM payments
+                    WHERE status='pending'
+                    AND expires_at < NOW()
+                """)
 
-                await conn.execute(
-                    "UPDATE payments SET status='expired' WHERE order_id=$1",
-                    p["order_id"]
-                )
+                for row in rows:
+
+                    try:
+                        await bot.delete_message(
+                            row["user_id"],
+                            row["message_id"]
+                        )
+                    except Exception:
+                        pass
+
+                    await conn.execute("""
+                        UPDATE payments
+                        SET status='expired'
+                        WHERE order_id=$1
+                    """, row["order_id"])
+
+        except Exception as e:
+            print("[QR WATCHER]", e)
 
         await asyncio.sleep(10)
 
 
 # =========================
-# WEBHOOK (FULL CORE SYSTEM)
+# WEBHOOK
 # =========================
+
 @app.post("/webhook")
 async def webhook(request: Request):
 
@@ -387,37 +516,58 @@ async def webhook(request: Request):
 
     try:
         data = json.loads(raw_body)
-    except:
+    except Exception:
         return {"ok": False}
+
+    signature = request.headers.get(
+        "X-Signature",
+        ""
+    )
+
+    if not verify_signature(
+        raw_body,
+        signature
+    ):
+        return {
+            "ok": False,
+            "error": "invalid_signature"
+        }
 
     order_id = data.get("order_id")
     status = data.get("status")
     amount = int(data.get("amount") or 0)
 
-    signature = request.headers.get("X-Signature", "")
-
     if not order_id:
         return {"ok": False}
 
-    if status not in ("paid", "failed", "expired"):
+    if status not in (
+        "paid",
+        "failed",
+        "expired"
+    ):
         return {"ok": True}
 
-    if not verify_signature(raw_body, signature):
-        return {"ok": False, "error": "invalid_signature"}
+    user_id = None
+    code = None
+    msg_id = None
+    qr_message_id = None
 
     async with db_pool.acquire() as conn:
 
         async with conn.transaction():
 
-            payment = await conn.fetchrow(
-                """
-                SELECT order_id, user_id, code, status, group_message_id
+            payment = await conn.fetchrow("""
+                SELECT
+                    order_id,
+                    user_id,
+                    code,
+                    status,
+                    group_message_id,
+                    message_id
                 FROM payments
                 WHERE order_id=$1
                 FOR UPDATE
-                """,
-                order_id
-            )
+            """, order_id)
 
             if not payment:
                 return {"ok": False}
@@ -428,114 +578,131 @@ async def webhook(request: Request):
             user_id = payment["user_id"]
             code = payment["code"]
             msg_id = payment["group_message_id"]
+            qr_message_id = payment["message_id"]
 
-            # =========================
-            # UPDATE STATUS
-            # =========================
-            await conn.execute(
-                "UPDATE payments SET status=$1 WHERE order_id=$2",
-                status, order_id
-            )
+            await conn.execute("""
+                UPDATE payments
+                SET status=$1
+                WHERE order_id=$2
+            """, status, order_id)
 
-            # =========================
-            # SUCCESS FLOW
-            # =========================
             if status == "paid":
 
-                # unlock code
-                await conn.execute(
-                    "UPDATE codes SET owner_id=$1 WHERE code=$2",
-                    user_id, code
-                )
-
-                # wallet
-                await conn.execute(
-                    """
+                await conn.execute("""
                     UPDATE wallets
-                    SET saldo = saldo + $1,
+                    SET
+                        saldo = saldo + $1,
                         total_success = total_success + $1
-                    WHERE user_id=$2
-                    """,
-                    amount, user_id
-                )
-
-                # referral 10%
-                ref = await conn.fetchrow(
-                    "SELECT ref_by FROM users WHERE user_id=$1",
+                    WHERE user_id = $2
+                """,
+                    amount,
                     user_id
                 )
 
-                if ref and ref["ref_by"]:
-                    bonus = int(amount * 0.1)
-
-                    await conn.execute(
-                        """
-                        UPDATE wallets
-                        SET saldo = saldo + $1,
-                            referral_income = referral_income + $1
-                        WHERE user_id=$2
-                        """,
-                        bonus, ref["ref_by"]
-                    )
-
     # =========================
-    # UPDATE GROUP MESSAGE
+    # CHANNEL UPDATE
     # =========================
-    try:
-        if status == "paid":
-            icon = "🟢 SUCCESS"
-        elif status == "expired":
-            icon = "⚫ EXPIRED"
-        else:
-            icon = "🟡 PROCESS"
 
-        await bot.edit_message_text(
-            chat_id=NOTIFICATION_CHANNEL,
-            message_id=msg_id,
-            text=(
-                "┌───────────────┐\n"
-                f"│ {icon}\n"
-                "├───────────────┤\n"
-                f"│ User : {user_id}\n"
-                f"│ Code : {code}\n"
-                "└───────────────┘"
+    if msg_id and NOTIFICATION_CHANNEL:
+
+        try:
+
+            icon = {
+                "paid": "🟢 SUCCESS",
+                "failed": "🔴 FAILED",
+                "expired": "⚫ EXPIRED"
+            }.get(status, "🟡 PROCESS")
+
+            await safe_send(
+                bot.edit_message_text,
+                chat_id=NOTIFICATION_CHANNEL,
+                message_id=msg_id,
+                text=(
+                    f"{icon}\n\n"
+                    f"User : {user_id}\n"
+                    f"Code : {code}"
+                )
             )
-        )
-    except:
-        pass
+
+        except Exception as e:
+            print("[CHANNEL UPDATE]", e)
 
     # =========================
     # USER ACTION
     # =========================
+
     try:
+
         if status == "paid":
-            await bot.delete_message(user_id, payment["message_id"])
 
-            medias = await db_pool.fetch(
-                "SELECT file_id, file_type FROM medias WHERE code=$1",
-                code
-            )
+            if qr_message_id:
+                try:
+                    await bot.delete_message(
+                        user_id,
+                        qr_message_id
+                    )
+                except Exception:
+                    pass
 
-            for m in medias:
-                if m["file_type"] == "photo":
-                    await bot.send_photo(user_id, m["file_id"])
-                elif m["file_type"] == "video":
-                    await bot.send_video(user_id, m["file_id"])
+            medias = await db_pool.fetch("""
+                SELECT
+                    file_id,
+                    file_type
+                FROM medias
+                WHERE code=$1
+            """, code)
+
+            for media in medias:
+
+                if media["file_type"] == "photo":
+
+                    await safe_send(
+                        bot.send_photo,
+                        user_id,
+                        media["file_id"]
+                    )
+
+                elif media["file_type"] == "video":
+
+                    await safe_send(
+                        bot.send_video,
+                        user_id,
+                        media["file_id"]
+                    )
+
                 else:
-                    await bot.send_document(user_id, m["file_id"])
 
-            await bot.send_message(
+                    await safe_send(
+                        bot.send_document,
+                        user_id,
+                        media["file_id"]
+                    )
+
+            await safe_send(
+                bot.send_message,
                 user_id,
-                f"🟢 SUCCESS\nCode: <code>{code}</code>",
-                parse_mode="HTML"
+                f"🟢 Pembayaran berhasil\n\nCode: {code}"
             )
 
         elif status == "expired":
-            await bot.delete_message(user_id, payment["message_id"])
-            await bot.send_message(user_id, "⚫ QRIS EXPIRED")
 
-    except:
-        pass
+            if qr_message_id:
+                try:
+                    await bot.delete_message(
+                        user_id,
+                        qr_message_id
+                    )
+                except Exception:
+                    pass
+
+            await safe_send(
+                bot.send_message,
+                user_id,
+                "⚫ QRIS EXPIRED"
+            )
+
+    except Exception as e:
+        print("[USER ACTION]", e)
 
     return {"ok": True}
     
@@ -548,9 +715,10 @@ async def start(message: Message, bot: Bot):
 
     user = message.from_user
 
-    # =========================
+    if not user:
+        return
+
     # SAVE USER
-    # =========================
     try:
         await add_user(
             user.id,
@@ -558,20 +726,16 @@ async def start(message: Message, bot: Bot):
             user.full_name
         )
     except Exception as e:
-        print("ADD USER ERROR:", e)
+        print("[ADD USER ERROR]", e)
 
-    # =========================
     # ANTI SPAM
-    # =========================
     if not user_limit(user.id):
         return await safe_send(
             message.answer,
-            "⏳ Santai dulu bos… jangan spam kayak lagi panik 😏"
+            "⏳ Santai dulu bos… jangan spam 😏"
         )
 
-    # =========================
-    # FORCE SUB CHECK
-    # =========================
+    # FORCE SUB
     if FORCE_CHANNEL:
 
         joined = await check_force_sub(
@@ -586,37 +750,36 @@ async def start(message: Message, bot: Bot):
                 (
                     "🚫 AKSES DITOLAK\n\n"
                     "😏 Kamu belum join channel.\n"
-                    "Tanpa itu, bot ini bukan buat kamu.\n\n"
-                    "👉 Join dulu baru balik lagi."
+                    "Tanpa itu, bot ini gak bisa dipakai.\n\n"
+                    "👉 Join dulu lalu tekan tombol verifikasi."
                 ),
                 reply_markup=force_kb()
             )
 
-    # =========================
-    # MAIN MENU (SAVAGE UI)
-    # =========================
+    # MAIN MENU
     await safe_send(
         message.answer,
         (
             "🔥 <b>FILE CODE SYSTEM</b>\n\n"
             "━━━━━━━━━━━━━━\n"
-            "😈 STATUS: ONLINE & WATCHING YOU\n"
+            "😈 STATUS : ONLINE\n"
             "━━━━━━━━━━━━━━\n\n"
-            "📌 MENU\n"
+            "📤 Upload File\n"
+            "📥 Get File\n"
+            "💰 Wallet\n"
+            "📊 Account\n\n"
             "━━━━━━━━━━━━━━\n"
-            "📤 Upload File → masukin file\n"
-            "📥 Get File → pakai CODE\n\n"
+            "⚠️ PERINGATAN\n"
             "━━━━━━━━━━━━━━\n"
-            "💀 WARNING\n"
-            "━━━━━━━━━━━━━━\n"
-            "• CODE itu bukan mainan\n"
-            "• Salah kirim = tanggung sendiri\n"
-            "• Bot ini gak punya tombol 'kasihan'\n\n"
-            "😏 Selamat bermain… jangan nangis kalau salah langkah."
+            "• Simpan code baik-baik\n"
+            "• Salah code = file tidak ditemukan\n"
+            "• Jangan bagikan code pribadi\n\n"
+            "😏 Selamat menggunakan bot."
         ),
         parse_mode="HTML",
         reply_markup=get_keyboard()
     )
+
 
 # =========================
 # CHECK SUB
@@ -629,13 +792,7 @@ async def check_sub(call: CallbackQuery, bot: Bot):
 
     if not user_limit(user_id):
         return await call.answer(
-            "⏳ Pelan dikit… kamu bukan robot 😏",
-            show_alert=True
-        )
-
-    if not FORCE_CHANNEL:
-        return await call.answer(
-            "Force Sub OFF",
+            "⏳ Pelan dikit...",
             show_alert=True
         )
 
@@ -647,69 +804,83 @@ async def check_sub(call: CallbackQuery, bot: Bot):
 
     if not joined:
         return await call.answer(
-            "🚫 Belum join. Jangan bohong 😏",
+            "🚫 Kamu belum join channel.",
             show_alert=True
         )
 
     try:
         await call.message.edit_text(
-            "✅ VERIFIED\n\n"
-            "😏 Oke… kamu ternyata masih layak masuk."
+            "✅ VERIFIED\n\n😈 Akses berhasil dibuka."
         )
-    except:
+    except TelegramBadRequest:
         pass
+    except Exception as e:
+        print("[CHECK SUB ERROR]", e)
 
     await safe_send(
         call.message.answer,
         (
             "🔥 AKSES DIBUKA\n\n"
-            "😈 Selamat… kamu lolos gerbang.\n"
-            "Sekarang jangan bikin masalah."
+            "😈 Verifikasi berhasil.\n"
+            "Silakan gunakan bot."
         ),
         reply_markup=get_keyboard()
     )
 
-    await call.answer("Ya… kamu lolos 😏")
+    await call.answer(
+        "✅ Verified"
+    )
+
+
 # =========================
-# UP FILE INIT
+# CONFIG
+# =========================
+
+GROUP_ID = -1003920865154
+
+
+# =========================
+# UPLOAD KEYBOARD
 # =========================
 
 def upload_kb():
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="✅ DONE", callback_data="upload_done"),
-                InlineKeyboardButton(text="❌ CANCEL", callback_data="upload_cancel")
+                InlineKeyboardButton(
+                    text="✅ DONE",
+                    callback_data="upload_done"
+                ),
+                InlineKeyboardButton(
+                    text="❌ CANCEL",
+                    callback_data="upload_cancel"
+                )
             ]
         ]
     )
-
+# =========================
+# START UPLOAD
+# =========================
 
 @router.message(F.text == "📤 Up File")
 async def up_file(message: Message):
 
     user_id = message.from_user.id
 
-    # =========================
-    # ANTI SPAM
-    # =========================
     if not user_limit(user_id):
         return await safe_send(
             message.answer,
             "⏳ Jangan spam ya 😏"
         )
 
-    # =========================
-    # RESET SESSION
-    # =========================
     upload_sessions.pop(user_id, None)
     user_states.pop(user_id, None)
     last_edit_time.pop(user_id, None)
 
-    # =========================
-    # CREATE SESSION
-    # =========================
-    user_states[user_id] = {"mode": "upload"}
+    user_states[user_id] = {
+        "mode": "upload"
+    }
 
     upload_sessions[user_id] = {
         "video": 0,
@@ -717,19 +888,22 @@ async def up_file(message: Message):
         "document": 0,
         "items": [],
         "msg_id": None,
-        "created_at": time.time()
+        "created_at": time.time(),
+        "locked": False,
+        "processing": False,
+        "step": None,
+        "title": None,
+        "paid": False,
+        "price": 0,
+        "share": False
     }
 
-    # =========================
-    # SEND PANEL
-    # =========================
     msg = await safe_send(
         message.answer,
         (
             "📤 <b>UPLOAD MODE AKTIF</b>\n\n"
-            "😏 Kirim file kamu sekarang.\n"
-            "Klik DONE kalau sudah selesai.\n\n"
-            "💀 Jangan kelamaan..."
+            "😏 Kirim file sekarang.\n"
+            "Klik DONE jika sudah selesai."
         ),
         parse_mode="HTML",
         reply_markup=upload_kb()
@@ -752,97 +926,90 @@ async def handle_media(message: Message):
 
     user_id = message.from_user.id
 
-    state = user_states.get(user_id)
-    session = upload_sessions.get(user_id)
-
-    # =========================
-    # VALIDATION
-    # =========================
-    if not state or state.get("mode") != "upload":
+    if user_states.get(user_id, {}).get("mode") != "upload":
         return
+
+    session = upload_sessions.get(user_id)
 
     if not session or not session.get("msg_id"):
         return
 
-    # =========================
-    # GET FILE
-    # =========================
+    # SESSION EXPIRE 30 MENIT
+    if time.time() - session["created_at"] > 1800:
+
+        upload_sessions.pop(user_id, None)
+        user_states.pop(user_id, None)
+
+        return await message.answer(
+            "⏰ Session upload expired.\nSilakan upload ulang."
+        )
+
+    # LIMIT FILE
+    if len(session["items"]) >= 100:
+        return await message.answer(
+            "🚫 Maksimal 100 file per upload."
+        )
+
     file_obj = None
     file_type = None
 
     if message.photo:
         file_obj = message.photo[-1]
         file_type = "photo"
-        session["photo"] = session.get("photo", 0) + 1
+        session["photo"] += 1
 
     elif message.video:
         file_obj = message.video
         file_type = "video"
-        session["video"] = session.get("video", 0) + 1
+        session["video"] += 1
 
     elif message.document:
         file_obj = message.document
         file_type = "document"
-        session["document"] = session.get("document", 0) + 1
+        session["document"] += 1
 
     if not file_obj:
         return
 
-    # =========================
-    # SAVE ITEM
-    # =========================
     session["items"].append({
         "file_id": file_obj.file_id,
         "type": file_type,
         "size": getattr(file_obj, "file_size", 0) or 0
     })
 
-    # =========================
-    # DELETE USER MESSAGE
-    # =========================
     try:
         await message.delete()
     except:
         pass
 
-    # =========================
-    # THROTTLE EDIT
-    # =========================
     now = time.time()
-    last = last_edit_time.get(user_id, 0)
 
-    if now - last < 1.3:
+    if now - last_edit_time.get(user_id, 0) < 1.3:
         return
 
     last_edit_time[user_id] = now
 
-    # =========================
-    # STATS
-    # =========================
     total = len(session["items"])
+
     size_mb = round(
-        sum(x.get("size", 0) for x in session["items"]) / (1024 * 1024),
+        sum(x["size"] for x in session["items"]) / (1024 * 1024),
         2
     )
 
-    bar_len = 10
-    filled = min(bar_len, total)
-    bar = "█" * filled + "░" * (bar_len - filled)
+    bar = (
+        "█" * min(total, 10)
+        + "░" * (10 - min(total, 10))
+    )
 
     text = (
         "📤 <b>UPLOAD PROGRESS</b>\n\n"
-        f"📊 Progress : [{bar}] {total} file\n\n"
-        f"🖼 Photo    : {session['photo']}\n"
-        f"🎬 Video    : {session['video']}\n"
-        f"📁 Doc      : {session['document']}\n"
-        f"💾 Size     : {size_mb} MB\n\n"
-        "━━━━━━━━━━━━━━\n"
-        "😏 Klik DONE kalau sudah selesai"
+        f"[{bar}] {total} file\n"
+        f"🖼 {session['photo']} | "
+        f"🎬 {session['video']} | "
+        f"📁 {session['document']}\n"
+        f"💾 {size_mb} MB"
     )
 
-    # =========================
-    # UPDATE PANEL
-    # =========================
     try:
         await safe_send(
             message.bot.edit_message_text,
@@ -852,243 +1019,304 @@ async def handle_media(message: Message):
             parse_mode="HTML",
             reply_markup=upload_kb()
         )
-    except Exception as e:
-        print("EDIT ERROR:", e)
-
-GROUP_ID = -1003920865154
-
-# =========================
-# GENERATE CODE
-# =========================
-def generate_code(v, p, d):
-    base = f"{v}{p}{d}{secrets.token_hex(4)}"
-    rand = hashlib.sha1(base.encode()).hexdigest()[:12]
-    return f"decodefilebot_{v}v_{p}p_{d}d_{rand}"
+    except:
+        pass
 
 
 # =========================
-# START DONE FLOW
+# GENERATE FILE CODE
 # =========================
-@router.callback_query(F.data == "upload_done")
-async def done(call: CallbackQuery):
 
-    user_id = call.from_user.id
-    s = upload_sessions.get(user_id)
+def generate_file_code(
+    video_count: int,
+    photo_count: int,
+    document_count: int
+) -> str:
 
-    if not s or not s.get("items"):
-        return await call.answer("😏 kosong? mau jual angin?", show_alert=True)
+    seed = (
+        f"{video_count}"
+        f"{photo_count}"
+        f"{document_count}"
+        f"{time.time()}"
+        f"{secrets.token_hex(8)}"
+    )
 
-    if s.get("locked"):
-        return await call.answer("⏳ lagi diproses...", show_alert=True)
-
-    # 🔥 LOCK TOTAL (ANTI SPAM / DOUBLE CLICK)
-    s["locked"] = True
-    s["step"] = "title"
-    s["created_at"] = int(time.time())
-
-    await call.message.edit_text(
-        "━━━━━━━━━━━━━━\n"
-        "💀 <b>MARKET SETUP</b>\n"
-        "━━━━━━━━━━━━━━\n\n"
-        "📝 Kirim <b>JUDUL PRODUCT</b>\n"
-        "😏 contoh: Premium Pack",
-        parse_mode="HTML"
+    return (
+        "decodefilebot_" +
+        hashlib.sha1(seed.encode()).hexdigest()[:16]
     )
 
 
 # =========================
-# FLOW ENGINE (STATE SAFE)
+# DONE UPLOAD
 # =========================
+
+@router.callback_query(F.data == "upload_done")
+async def done(call: CallbackQuery):
+
+    user_id = call.from_user.id
+
+    s = upload_sessions.get(user_id)
+
+    if (
+        not s
+        or not isinstance(s, dict)
+        or not s.get("items")
+    ):
+        return await call.answer(
+            "Upload kosong 😏",
+            show_alert=True
+        )
+
+    # ANTI DOUBLE CLICK
+    if s.get("processing"):
+        return await call.answer(
+            "Sedang diproses..."
+        )
+
+    s["processing"] = True
+    s["locked"] = True
+    s["step"] = "title"
+
+    await call.message.edit_text(
+        "💀 MARKET SETUP\n\n"
+        "Kirim JUDUL PRODUCT:"
+    )
+
+    await call.answer()
+
+
+# =========================
+# FLOW ENGINE
+# =========================
+
 @router.message(F.text)
 async def market_flow(message: Message):
 
     user_id = message.from_user.id
+
     s = upload_sessions.get(user_id)
 
     if not s or not s.get("locked"):
         return
 
-    # prevent other bots trigger / noise
-    if message.text.startswith("/"):
+    if user_states.get(user_id, {}).get("mode") != "upload":
         return
 
     text = message.text.strip()
 
-    # =========================
-    # STEP 1 TITLE
-    # =========================
+    if text.startswith("/"):
+        return
+
+    # TITLE
     if s["step"] == "title":
+
         s["title"] = text
         s["step"] = "paid"
 
-        return await message.answer("💰 BERBAYAR? (YES / NO)")
+        return await message.answer(
+            "💰 PAID? (YES/NO)"
+        )
 
-    # =========================
-    # STEP 2 PAID
-    # =========================
+    # PAID
     if s["step"] == "paid":
 
-        if text.lower() == "yes":
-            s["paid"] = True
-            s["step"] = "price"
-            return await message.answer("💵 MASUKKAN HARGA (angka)")
+        s["paid"] = text.lower() == "yes"
 
-        s["paid"] = False
-        s["price"] = 0
-        s["step"] = "final"
-        return await message.answer("📤 SHARE MEDIA? (YES / NO)")
+        s["step"] = (
+            "price"
+            if s["paid"]
+            else "final"
+        )
 
-    # =========================
-    # STEP 3 PRICE
-    # =========================
+        if s["paid"]:
+            return await message.answer(
+                "💵 PRICE?"
+            )
+
+        return await message.answer(
+            "📤 SHARE? (YES/NO)"
+        )
+
+    # PRICE
     if s["step"] == "price":
 
         if not text.isdigit():
-            return await message.answer("❌ angka saja")
+            return await message.answer(
+                "Masukkan angka yang valid."
+            )
 
-        s["price"] = int(text)
+        price = int(text)
+
+        if price < 100:
+            return await message.answer(
+                "Minimal harga 100."
+            )
+
+        if price > 100000000:
+            return await message.answer(
+                "Harga terlalu besar."
+            )
+
+        s["price"] = price
         s["step"] = "final"
-        return await message.answer("📤 SHARE MEDIA? (YES / NO)")
 
+        return await message.answer(
+            "📤 SHARE? (YES/NO)"
+        )
 
-    # =========================
-    # STEP 4 FINAL BUILD
-    # =========================
+    # FINAL
     if s["step"] == "final":
 
         s["share"] = text.lower() == "yes"
 
-        code = generate_code(
-            s.get("video", 0),
-            s.get("photo", 0),
-            s.get("document", 0)
+        code = generate_file_code(
+            s["video"],
+            s["photo"],
+            s["document"]
         )
 
-        total_items = len(s["items"])
-        total_size = sum(x.get("size", 0) for x in s["items"])
-
         try:
+
             async with db_pool.acquire() as conn:
-                async with conn.transaction():
 
-                    # =========================
-                    # SAVE PRODUCT META
-                    # =========================
-                    await conn.execute(
-                        """
-                        INSERT INTO codes(
-                            code, owner_id, title,
-                            is_paid, price, share_media,
-                            total_media, total_size,
-                            status, created_at
-                        )
-                        VALUES($1,$2,$3,$4,$5,$6,$7,$8,'PENDING',NOW())
-                        """,
-                        code,
-                        user_id,
-                        s["title"],
-                        s["paid"],
-                        s["price"],
-                        s["share"],
-                        total_items,
-                        total_size
-                    )
-
-                    # =========================
-                    # SAVE MEDIA
-                    # =========================
-                    items = [
-                        (code, m["file_id"], m["type"], m.get("size", 0))
-                        for m in s["items"]
-                        if m.get("file_id")
-                    ]
-
-                    if items:
-                        await conn.executemany(
-                            """
-                            INSERT INTO medias(code,file_id,file_type,file_size)
-                            VALUES($1,$2,$3,$4)
-                            """,
-                            items
-                        )
-
-            # =========================
-            # POST TO GROUP (ANTI SPAM ONLY 1 MSG)
-            # =========================
-            group_msg = await message.bot.send_message(
-                GROUP_ID,
-                (
-                    "━━━━━━━━━━━━━━\n"
-                    "🟡 <b>NEW PRODUCT (PENDING)</b>\n"
-                    "━━━━━━━━━━━━━━\n\n"
-                    f"📦 CODE : <code>{code[:10]}****</code>\n"
-                    f"📝 TITLE: {s['title']}\n"
-                    f"💰 TYPE : {'PAID' if s['paid'] else 'FREE'}\n"
-                    f"💵 PRICE: {s['price']}\n"
-                    f"👤 USER : {user_id}\n\n"
-                    "⚠️ STATUS: WAITING PAYMENT\n"
-                    "━━━━━━━━━━━━━━"
-                ),
-                parse_mode="HTML"
-            )
-
-            # OPTIONAL STORE GROUP MSG ID
-            async with db_pool.acquire() as conn:
                 await conn.execute(
-                    "UPDATE codes SET group_msg_id=$1 WHERE code=$2",
-                    group_msg.message_id,
-                    code
+                    """
+                    INSERT INTO codes(
+                        code,
+                        owner_id,
+                        price,
+                        is_paid,
+                        total_media,
+                        total_size,
+                        created_at
+                    )
+                    VALUES(
+                        $1,$2,$3,$4,$5,$6,NOW()
+                    )
+                    """,
+                    code,
+                    user_id,
+                    s.get("price", 0),
+                    s.get("paid", False),
+                    len(s["items"]),
+                    sum(
+                        x["size"]
+                        for x in s["items"]
+                    )
+                )
+
+                await conn.executemany(
+                    """
+                    INSERT INTO medias(
+                        code,
+                        file_id,
+                        file_type,
+                        file_size
+                    )
+                    VALUES($1,$2,$3,$4)
+                    """,
+                    [
+                        (
+                            code,
+                            m["file_id"],
+                            m["type"],
+                            m["size"]
+                        )
+                        for m in s["items"]
+                    ]
                 )
 
             await message.answer(
-                "💀 PRODUCT CREATED\n\n"
-                f"📦 CODE: <code>{code}</code>\n"
-                f"📝 TITLE: {s['title']}\n"
-                f"⚡ STATUS: READY TO SELL",
-                parse_mode="HTML"
+                f"✅ SUCCESS\n\nCODE:\n{code}"
             )
 
-        except Exception as e:
-            print("ERROR:", e)
-            await message.answer("❌ gagal proses")
+            # AUTO SHARE GROUP
+            if s["share"]:
 
-        # =========================
-        # CLEAN + STERILIZE SESSION
-        # =========================
+                try:
+                    await message.bot.send_message(
+                        GROUP_ID,
+                        (
+                            "📦 FILE BARU\n\n"
+                            f"📌 Judul : {s['title']}\n"
+                            f"🔑 Code : {code}\n"
+                            f"📁 Total : {len(s['items'])} File\n"
+                            f"💰 Status : "
+                            f"{'PAID' if s['paid'] else 'FREE'}"
+                        )
+                    )
+
+                except Exception as e:
+                    print(
+                        "[SHARE ERROR]",
+                        e
+                    )
+
+        except Exception as e:
+
+            print(
+                "[UPLOAD SAVE ERROR]",
+                e
+            )
+
+            await message.answer(
+                "❌ Gagal menyimpan data."
+            )
+
         upload_sessions.pop(user_id, None)
         user_states.pop(user_id, None)
         last_edit_time.pop(user_id, None)
 
 
 # =========================
-# CANCEL RESET
+# CANCEL
 # =========================
+
 @router.callback_query(F.data == "upload_cancel")
 async def cancel(call: CallbackQuery):
 
-    user_id = call.from_user.id
+    upload_sessions.pop(
+        call.from_user.id,
+        None
+    )
 
-    upload_sessions.pop(user_id, None)
-    user_states.pop(user_id, None)
-    last_edit_time.pop(user_id, None)
+    user_states.pop(
+        call.from_user.id,
+        None
+    )
 
-    await call.message.edit_text("❌ SYSTEM RESET DONE")
+    last_edit_time.pop(
+        call.from_user.id,
+        None
+    )
+
+    await call.message.edit_text(
+        "❌ Upload dibatalkan."
+    )
+
+    await call.answer()
 
 # =========================
 # CONFIG
 # =========================
+
 COOLDOWN_TIME = 5
+PAGE_DELAY = 1
 
-# WAJIB ADA INI (BIAR GAK ERROR)
-cooldown = {
-    "global": {}
-}
+cooldown = {"global": {}}
+pagination_lock = {}
+page_history = {}
+page_cooldown = {}
 
+CHANNEL_LINK = os.getenv("CHANNEL_LINK", "https://t.me/xxxx")
+GROUP_LINK = os.getenv("GROUP_LINK", "https://t.me/xxxx")
 
 # =========================
-# NORMALIZER (FIX + SAFE)
+# NORMALIZER
 # =========================
-def normalize_type(t: str):
+
+def normalize_type(t: str) -> str:
     t = (t or "").lower().strip()
 
     if t in ("photo", "image", "img", "jpg", "jpeg", "png"):
@@ -1101,9 +1329,11 @@ def normalize_type(t: str):
 
 
 # =========================
-# COOLDOWN (ANTI SPAM FIX)
+# COOLDOWN
 # =========================
+
 def is_cooldown(user_id: int) -> bool:
+
     now = time.time()
     last = cooldown["global"].get(user_id, 0)
 
@@ -1115,176 +1345,94 @@ def is_cooldown(user_id: int) -> bool:
 
 
 # =========================
-# LOAD MEDIA (SAFE + SUPABASE READY)
+# PAID CHECK
 # =========================
-async def load_media(code: str):
-    if not code:
-        return []
+
+async def is_paid(code: str) -> bool:
 
     try:
         async with db_pool.acquire() as conn:
-            rows = await conn.fetch(
+
+            row = await conn.fetchrow(
                 """
-                SELECT file_id, file_type, COALESCE(file_size, 0) AS file_size
-                FROM medias
-                WHERE code = $1
-                ORDER BY id ASC
+                SELECT is_paid
+                FROM codes
+                WHERE code=$1
                 """,
                 code
             )
 
+            return bool(row and row["is_paid"])
+
     except Exception as e:
-        print("DB ERROR load_media:", e)
-        return []
-
-    if not rows:
-        return []
-
-    return [
-        {
-            "file_id": r["file_id"],
-            "file_type": normalize_type(r["file_type"]),
-            "file_size": int(r["file_size"] or 0)
-        }
-        for r in rows
-    ]
-
-# =========================
-# SEND MEDIA (ANTI BAN + SAFE + STABLE)
-# =========================
-async def send_media(bot, chat_id: int, chunk: list):
-
-    if not chunk:
+        print("PAID CHECK ERROR:", e)
         return False
 
-    media = []
 
-    # =========================
-    # BUILD MEDIA GROUP (MAX 10 TELEGRAM LIMIT FIX)
-    # =========================
-    for m in chunk[:10]:
-
-        fid = m.get("file_id")
-        ftype = (m.get("file_type") or "").lower()
-
-        if not fid:
-            continue
-
-        try:
-            if ftype == "photo":
-                media.append(InputMediaPhoto(media=fid))
-
-            elif ftype == "video":
-                media.append(InputMediaVideo(media=fid))
-
-            else:
-                media.append(InputMediaDocument(media=fid))
-
-        except Exception as e:
-            print("MEDIA BUILD ERROR:", e)
-
-    if not media:
-        return False
-
-    # =========================
-    # SEND WITH RETRY + FLOOD CONTROL
-    # =========================
-    for attempt in range(5):
-
-        try:
-            await global_throttle()  # optional anti spam global limiter
-
-            await bot.send_media_group(
-                chat_id=chat_id,
-                media=media
-            )
-
-            return True
-
-        except TelegramRetryAfter as e:
-            wait = int(e.retry_after or 1)
-            print(f"FLOOD WAIT: {wait}s")
-            await asyncio.sleep(wait + 1)
-
-        except TelegramBadRequest as e:
-            print("BAD REQUEST:", e)
-            return False
-
-        except Exception as e:
-            print(f"SEND MEDIA ERROR [{attempt+1}]:", e)
-            await asyncio.sleep(1 + attempt)
-
-    print("❌ FAILED SEND MEDIA AFTER RETRIES")
-    return False
-
-# =========================
-# GLOBAL SAFE STATE
-# =========================
-COOLDOWN_TIME = 5
-pagination_lock = {}
-page_history = {}
-
-cooldown = {"global": {}}
+BAYARGG_URL = os.getenv(
+    "BAYARGG_URL",
+    "https://your-bayargg-link.com/pay?code="
+)
 
 
-# =========================
-# NORMALIZER
-# =========================
-def normalize_type(t: str):
-    t = (t or "").lower().strip()
-    if t in ["photo", "image", "img"]:
-        return "photo"
-    if t in ["video", "vid"]:
-        return "video"
-    return "document"
+def payment_button(code: str):
 
-
-# =========================
-# COOLDOWN SAFE
-# =========================
-def is_cooldown(user_id: int):
-    now = time.time()
-    last = cooldown["global"].get(user_id, 0)
-
-    if now - last < COOLDOWN_TIME:
-        return True
-
-    cooldown["global"][user_id] = now
-    return False
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💳 BAYAR SEKARANG",
+                    url=f"{BAYARGG_URL}{code}"
+                )
+            ]
+        ]
+    )
 
 
 # =========================
 # LOAD MEDIA
 # =========================
+
 async def load_media(code: str):
+
     if not code:
         return []
 
     try:
+
         async with db_pool.acquire() as conn:
-            rows = await conn.fetch("""
-                SELECT file_id, file_type, COALESCE(file_size,0) AS file_size
+
+            rows = await conn.fetch(
+                """
+                SELECT
+                    file_id,
+                    file_type,
+                    COALESCE(file_size,0) AS file_size
                 FROM medias
                 WHERE code=$1
                 ORDER BY id ASC
-            """, code)
+                """,
+                code
+            )
+
+        return [
+            {
+                "file_id": r["file_id"],
+                "file_type": normalize_type(r["file_type"]),
+                "file_size": int(r["file_size"] or 0)
+            }
+            for r in rows
+        ]
+
     except Exception as e:
-        print("DB ERROR:", e)
+        print("LOAD MEDIA ERROR:", e)
         return []
 
-    return [
-        {
-            "file_id": r["file_id"],
-            "file_type": normalize_type(r["file_type"]),
-            "file_size": r["file_size"]
-        }
-        for r in rows
-    ]
-
 
 # =========================
-# SAFE MEDIA SENDER (ANTI FLOOD + ANTI BAN)
+# SEND MEDIA
 # =========================
+
 async def send_media(bot, chat_id: int, chunk: list):
 
     if not chunk:
@@ -1292,64 +1440,50 @@ async def send_media(bot, chat_id: int, chunk: list):
 
     media = []
 
-    for m in chunk[:5]:
+    for item in chunk[:5]:
 
-        fid = m.get("file_id")
-        ftype = normalize_type(m.get("file_type"))
+        file_id = item.get("file_id")
+        file_type = normalize_type(item.get("file_type"))
 
-        if not fid:
+        if not file_id:
             continue
 
-        try:
-            if ftype == "photo":
-                media.append(InputMediaPhoto(media=fid))
+        if file_type == "photo":
+            media.append(InputMediaPhoto(media=file_id))
 
-            elif ftype == "video":
-                media.append(InputMediaVideo(media=fid))
+        elif file_type == "video":
+            media.append(InputMediaVideo(media=file_id))
 
-            else:
-                media.append(InputMediaDocument(media=fid))
-
-        except Exception as e:
-            print("MEDIA BUILD ERROR:", e)
+        else:
+            media.append(InputMediaDocument(media=file_id))
 
     if not media:
         return False
 
-    for attempt in range(5):
+    try:
 
-        try:
-            await asyncio.sleep(0.3)  # throttle ringan biar gak spam API
+        await safe_send(
+            bot.send_media_group,
+            chat_id=chat_id,
+            media=media
+        )
 
-            await bot.send_media_group(
-                chat_id=chat_id,
-                media=media
-            )
-            return True
+        return True
 
-        except TelegramRetryAfter as e:
-            await asyncio.sleep(e.retry_after + 1)
-
-        except TelegramBadRequest as e:
-            print("BAD REQUEST:", e)
-            return False
-
-        except Exception as e:
-            print(f"SEND MEDIA ERROR {attempt+1}:", e)
-            await asyncio.sleep(1 + attempt)
-
-    return False
+    except Exception as e:
+        print("SEND MEDIA ERROR:", e)
+        return False
 
 
 # =========================
 # KEYBOARD
 # =========================
-def build_kb(user_id, page, total_pages):
+
+def build_kb(user_id: int, page: int, total_pages: int):
 
     history = page_history.get(user_id, set())
-    rows = []
 
-    rows.append([
+    nav_row = [
         InlineKeyboardButton(
             text="⬅ Prev" if page > 0 else "⛔ Prev",
             callback_data="prev" if page > 0 else "noop"
@@ -1358,21 +1492,20 @@ def build_kb(user_id, page, total_pages):
             text="➡ Next" if page < total_pages - 1 else "⛔ Next",
             callback_data="next" if page < total_pages - 1 else "noop"
         )
-    ])
-
-    window = 5
-    start = max(0, page - 2)
-    end = min(total_pages, start + window)
+    ]
 
     page_row = []
+
+    start = max(0, page - 2)
+    end = min(total_pages, start + 5)
+
     for i in range(start, end):
 
-        if i == page:
-            mark = "🟢"
-        elif i in history:
-            mark = "🟡"
-        else:
-            mark = "⚪"
+        mark = (
+            "🟢" if i == page
+            else "🟡" if i in history
+            else "⚪"
+        )
 
         page_row.append(
             InlineKeyboardButton(
@@ -1381,123 +1514,260 @@ def build_kb(user_id, page, total_pages):
             )
         )
 
-    if page_row:
-        rows.append(page_row)
-
-    rows.append([
-        InlineKeyboardButton(
-            text="📢 CHANNEL",
-            url="https://t.me/+3g_yhHwxCrc5ZTg9"
-        ),
-        InlineKeyboardButton(
-            text="💬 GROUP",
-            url="https://t.me/+1tipdp-NTywzODhl"
-        )
-    ])
-
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            nav_row,
+            page_row,
+            [
+                InlineKeyboardButton(
+                    text="📢 CHANNEL",
+                    url=CHANNEL_LINK
+                ),
+                InlineKeyboardButton(
+                    text="💬 GROUP",
+                    url=GROUP_LINK
+                )
+            ]
+        ]
+    )
 
 
 # =========================
-# RENDER PAGE (FIX SAFE)
+# RENDER PAGE
 # =========================
-async def render_page(user_id: int, bot, chat_id: int):
+
+async def render_page(
+    user_id: int,
+    bot,
+    chat_id: int
+):
 
     state = user_states.get(user_id)
+
     if not state:
         return
 
-    data = state.get("data") or []
+    data = state.get("data", [])
+
     if not data:
         return
 
-    page = state.get("page", 0)
+    page = max(0, state.get("page", 0))
     size = state.get("page_size", 5)
 
-    total_pages = max(1, (len(data) + size - 1) // size)
-
-    page = max(0, min(page, total_pages - 1))
-    state["page"] = page
+    total_pages = max(
+        1,
+        (len(data) + size - 1) // size
+    )
 
     start = page * size
     end = start + size
+
     chunk = data[start:end]
 
-    page_history.setdefault(user_id, set()).add(page)
+    page_history.setdefault(
+        user_id,
+        set()
+    ).add(page)
 
-    await send_media(bot, chat_id, chunk)
-
-    text = (
-        f"📦 CODE: <code>{state.get('code','-')}</code>\n"
-        f"📄 Page: {page+1}/{total_pages}\n"
-        f"📁 Media: {start+1}-{start+len(chunk)} / {len(data)}\n\n"
-        "👇 CONTROL PANEL"
+    ok = await send_media(
+        bot,
+        chat_id,
+        chunk
     )
 
-    kb = build_kb(user_id, page, total_pages)
+    if not ok:
+        return
 
-    panel_id = state.get("last_panel_msg")
+    text = (
+        f"📦 CODE: <code>{state['code']}</code>\n"
+        f"📄 Page: {page+1}/{total_pages}\n"
+        f"📁 Item: {start+1}-{start+len(chunk)} / {len(data)}"
+    )
 
-    if panel_id:
+    kb = build_kb(
+        user_id,
+        page,
+        total_pages
+    )
+
+    old_msg = state.get("last_panel_msg")
+
+    if old_msg:
         try:
-            await bot.delete_message(chat_id, panel_id)
+            await bot.delete_message(
+                chat_id,
+                old_msg
+            )
         except:
             pass
 
     msg = await bot.send_message(
         chat_id,
         text,
-        reply_markup=kb,
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=kb
     )
 
     state["last_panel_msg"] = msg.message_id
 
 
 # =========================
-# PAGINATION LOCK
+# START GET FILE
 # =========================
+
+@router.message(F.text == "📥 Get File")
+async def start_get(message: Message):
+
+    user_states[message.from_user.id] = {
+        "mode": "getfile",
+        "created_at": time.time()
+    }
+
+    await message.answer(
+        "📥 Kirim CODE"
+    )
+
+
+# =========================
+# RECEIVE CODE
+# =========================
+
+@router.message(F.text & ~F.text.startswith("/"))
+async def receive_code(message: Message):
+
+    user_id = message.from_user.id
+
+    state = user_states.get(user_id)
+
+    if not state:
+        return
+
+    if state.get("mode") != "getfile":
+        return
+
+    if is_cooldown(user_id):
+        return await message.answer(
+            "⏳ Jangan spam"
+        )
+
+    text = (message.text or "").strip()
+
+    codes = re.findall(
+        r"decodefilebot_[A-Za-z0-9]+",
+        text
+    )
+
+    if not codes:
+        return await message.answer(
+            "❌ CODE tidak valid"
+        )
+
+    code = codes[0]
+
+    if not await is_paid(code):
+
+        return await message.answer(
+            "🔒 CODE ini berbayar",
+            reply_markup=payment_button(code)
+        )
+
+    data = await load_media(code)
+
+    if not data:
+        return await message.answer(
+            "❌ File tidak ditemukan"
+        )
+
+    user_states[user_id] = {
+        "mode": "view",
+        "code": code,
+        "page": 0,
+        "page_size": 5,
+        "data": data,
+        "last_panel_msg": None,
+        "created_at": time.time()
+    }
+
+    page_history[user_id] = set()
+
+    await message.answer(
+        f"📦 FILE DITEMUKAN: {len(data)}"
+    )
+
+    await render_page(
+        user_id,
+        message.bot,
+        message.chat.id
+    )
+
+
+# =========================
+# PAGINATION
+# =========================
+
 @router.callback_query(
-    F.data.in_(["next", "prev"]) |
-    F.data.startswith("page:")
+    F.data.in_(["next", "prev"])
+    | F.data.startswith("page:")
 )
-async def pagination(call):
+async def pagination(call: CallbackQuery):
 
     user_id = call.from_user.id
 
+    now = time.time()
+
+    if now - page_cooldown.get(user_id, 0) < PAGE_DELAY:
+        return await call.answer(
+            "⏳ Tunggu sebentar"
+        )
+
+    page_cooldown[user_id] = now
+
     if pagination_lock.get(user_id):
-        return await call.answer()
+        return await call.answer(
+            "⏳ Loading..."
+        )
 
     pagination_lock[user_id] = True
 
     try:
+
         state = user_states.get(user_id)
+
         if not state:
-            return await call.answer("Session expired", show_alert=True)
+            return await call.answer(
+                "Session expired"
+            )
 
-        data = state.get("data") or []
+        data = state.get("data", [])
+
         if not data:
-            return await call.answer("No data", show_alert=True)
+            return await call.answer(
+                "No data"
+            )
 
-        old_page = state.get("page", 0)
+        page = state.get("page", 0)
         size = state.get("page_size", 5)
 
-        max_page = (len(data) - 1) // size
+        max_page = (
+            len(data) - 1
+        ) // size
 
         if call.data == "next":
-            page = old_page + 1
+            page += 1
+
         elif call.data == "prev":
-            page = old_page - 1
+            page -= 1
+
         else:
-            try:
-                page = int(call.data.split(":")[1])
-            except:
-                return await call.answer("Error")
+            page = int(
+                call.data.split(":")[1]
+            )
 
-        page = max(0, min(page, max_page))
-
-        if page == old_page:
-            return await call.answer()
+        page = max(
+            0,
+            min(page, max_page)
+        )
 
         state["page"] = page
 
@@ -1510,157 +1780,88 @@ async def pagination(call):
         await call.answer()
 
     finally:
-        pagination_lock.pop(user_id, None)
+
+        pagination_lock.pop(
+            user_id,
+            None
+        )
 
 
 # =========================
 # NOOP
 # =========================
+
 @router.callback_query(F.data == "noop")
-async def noop(call):
-    await call.answer("😏")
+async def noop(call: CallbackQuery):
 
-# =========================
-# START GET FILE
-# =========================
-@router.message(F.text == "📥 Get File")
-async def start_get(message: Message):
-
-    user_id = message.from_user.id
-
-    user_states[user_id] = {
-        "mode": "getfile",
-        "created_at": time.time()
-    }
-
-    await message.answer("📥 Kirim CODE 😏")
+    await call.answer()
 
 
 # =========================
-# RECEIVE CODE (FIXED + SAFE)
+# SESSION CLEANER
 # =========================
-@router.message(F.text & ~F.text.startswith("/"))
-async def receive_code(message: Message):
 
-    user_id = message.from_user.id
-    state = user_states.get(user_id)
+async def cleanup_sessions():
 
-    if not state or state.get("mode") != "getfile":
-        return
-
-    # =========================
-    # COOLDOWN PROTECTION
-    # =========================
-    if is_cooldown(user_id):
-        return await message.answer("⏳ Jangan spam")
-
-    text = message.text or ""
-
-    # =========================
-    # FIXED CODE PATTERN
-    # =========================
-    codes = re.findall(
-        r"\bdecodefilebot_[A-Za-z0-9v_pd_]+\b",
-        text
-    )
-
-    if not codes:
-        return await message.answer("❌ CODE tidak valid")
-
-    codes = list(dict.fromkeys(codes))[:3]
-
-    all_data = []
-
-    # =========================
-    # LOAD MULTI CODE (SAFE)
-    # =========================
-    for code in codes:
-
-        data = await load_media(code)
-
-        if data:
-            all_data.extend(data)
-
-        await asyncio.sleep(0.1)  # anti flood DB
-
-    if not all_data:
-        return await message.answer("❌ File tidak ditemukan")
-
-    all_data = all_data[:50]  # limit safety
-
-    # =========================
-    # DELETE OLD PANEL SAFE
-    # =========================
-    old_state = user_states.get(user_id)
-
-    if old_state and old_state.get("last_panel_msg"):
+    while True:
 
         try:
-            await message.bot.delete_message(
-                chat_id=message.chat.id,
-                message_id=old_state["last_panel_msg"]
-            )
-        except:
-            pass
 
-    # =========================
-    # CREATE VIEW SESSION
-    # =========================
-    user_states[user_id] = {
-        "mode": "view",
-        "code": codes[0],
-        "page": 0,
-        "page_size": 5,
-        "data": all_data,
-        "last_panel_msg": None,
-        "created_at": time.time()
-    }
+            now = time.time()
 
-    page_history[user_id] = set()
+            for uid, state in list(user_states.items()):
 
-    await message.answer(
-        f"📦 FILE DITEMUKAN: <b>{len(all_data)}</b>",
-        parse_mode="HTML"
-    )
+                created = state.get(
+                    "created_at",
+                    now
+                )
 
-    # =========================
-    # RENDER FIRST PAGE
-    # =========================
-    await render_page(
-        user_id,
-        message.bot,
-        message.chat.id
-    )
-# ======================
-# USER SYSTEM PRO
-# ======================
+                if now - created > 3600:
 
-import time
+                    user_states.pop(uid, None)
+                    page_history.pop(uid, None)
+                    pagination_lock.pop(uid, None)
+                    page_cooldown.pop(uid, None)
 
-# optional in-memory anti spam tracking
+        except Exception as e:
+            print("CLEANUP ERROR:", e)
+
+        await asyncio.sleep(300)
+    
+# =========================
+# USER CACHE
+# =========================
+
+USER_COOLDOWN = 30  # detik
 user_cache = {}
-USER_COOLDOWN = 3  # detik
 
-
-# ======================
+# =========================
 # ADD / UPDATE USER (PRO)
-# ======================
-async def add_user(user_id: int, username: str = None, fullname: str = None):
+# =========================
 
-    username = username or ""
-    fullname = fullname or ""
+async def add_user(
+    user_id: int,
+    username: str | None = None,
+    fullname: str | None = None
+) -> bool:
+
+    username = (username or "").strip()
+    fullname = (fullname or "").strip()
+
     now = int(time.time())
 
-    # ======================
-    # SIMPLE ANTI-SPAM CACHE
-    # ======================
+    # =========================
+    # ANTI SPAM CACHE
+    # =========================
     last = user_cache.get(user_id, 0)
+
     if now - last < USER_COOLDOWN:
-        return False  # skip spam insert/update
+        return False
 
     user_cache[user_id] = now
 
     try:
+
         async with db_pool.acquire() as conn:
 
             await conn.execute(
@@ -1672,12 +1873,28 @@ async def add_user(user_id: int, username: str = None, fullname: str = None):
                     created_at,
                     last_seen
                 )
-                VALUES ($1,$2,$3,NOW(),NOW())
+                VALUES (
+                    $1,
+                    $2,
+                    $3,
+                    NOW(),
+                    NOW()
+                )
 
                 ON CONFLICT (user_id)
                 DO UPDATE SET
-                    username = EXCLUDED.username,
-                    fullname = EXCLUDED.fullname,
+                    username = CASE
+                        WHEN EXCLUDED.username <> ''
+                        THEN EXCLUDED.username
+                        ELSE users.username
+                    END,
+
+                    fullname = CASE
+                        WHEN EXCLUDED.fullname <> ''
+                        THEN EXCLUDED.fullname
+                        ELSE users.fullname
+                    END,
+
                     last_seen = NOW()
                 """,
                 user_id,
@@ -1688,11 +1905,93 @@ async def add_user(user_id: int, username: str = None, fullname: str = None):
         return True
 
     except Exception as e:
-        print("ADD USER ERROR:", e)
+        print(f"[ADD USER ERROR] {e}")
         return False
 
 # =========================
-# ACCOUNT DASHBOARD (FULL SYSTEM)
+# ACCOUNT DASHBOARD (FULL UPGRADED SYSTEM)
+# =========================
+
+import time
+from datetime import datetime
+import asyncio
+
+# =========================
+# ANTI DOUBLE ACCOUNT (BASIC SAFE CHECK)
+# =========================
+user_device_map = {}  # optional fingerprint simple
+
+
+async def detect_double_account(user_id: int, username: str):
+    """
+    simple anti double account logic
+    """
+    if not username:
+        return False
+
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT user_id FROM users
+            WHERE username=$1
+            ORDER BY created_at ASC
+            LIMIT 1
+        """, username)
+
+    if row and row["user_id"] != user_id:
+        return True
+
+    return False
+
+
+# =========================
+# REALTIME WALLET FETCH
+# =========================
+async def get_wallet(conn, user_id: int):
+    return await conn.fetchrow("""
+        SELECT * FROM wallets WHERE user_id=$1
+    """, user_id)
+
+
+# =========================
+# SIMPLE GRAPH (LAST 7 DAYS CODES)
+# =========================
+async def get_user_chart(conn, user_id: int):
+    rows = await conn.fetch("""
+        SELECT DATE(created_at) as d, COUNT(*) as total
+        FROM codes
+        WHERE owner_id=$1
+        GROUP BY d
+        ORDER BY d DESC
+        LIMIT 7
+    """, user_id)
+
+    if not rows:
+        return "📉 No data"
+
+    chart = "📊 Activity (7 Days)\n"
+    for r in rows:
+        bar = "█" * min(r["total"], 10)
+        chart += f"{r['d']} : {bar} ({r['total']})\n"
+
+    return chart
+
+
+# =========================
+# NOTIFICATION SYSTEM (OPTIONAL HOOK)
+# =========================
+async def notify_wallet_change(bot, user_id: int, amount: int):
+    try:
+        await bot.send_message(
+            user_id,
+            f"🔔 <b>TRANSACTION UPDATE</b>\n\n💰 +Rp {amount:,}",
+            parse_mode="HTML"
+        )
+    except:
+        pass
+
+
+# =========================
+# ACCOUNT DASHBOARD
 # =========================
 
 @router.message(F.text == "/account")
@@ -1709,27 +2008,27 @@ async def account_cmd(message: Message):
         user.full_name or "No Name"
     )
 
+    # =========================
+    # ANTI DOUBLE ACCOUNT CHECK
+    # =========================
+    if await detect_double_account(user.id, user.username or ""):
+        return await message.answer(
+            "🚫 <b>Duplicate Account Detected</b>\n\n"
+            "Sistem mendeteksi akun ganda.",
+            parse_mode="HTML"
+        )
+
     async with db_pool.acquire() as conn:
 
-        # =========================
-        # INIT WALLET SAFE
-        # =========================
+        # INIT WALLET
         await conn.execute("""
             INSERT INTO wallets (user_id)
             VALUES ($1)
             ON CONFLICT (user_id) DO NOTHING
         """, user.id)
 
-        # =========================
-        # GET WALLET
-        # =========================
-        wallet = await conn.fetchrow("""
-            SELECT * FROM wallets WHERE user_id=$1
-        """, user.id)
+        wallet = await get_wallet(conn, user.id)
 
-        # =========================
-        # GET RECENT CODES
-        # =========================
         codes = await conn.fetch("""
             SELECT code, total_media, total_size, status
             FROM codes
@@ -1742,8 +2041,10 @@ async def account_cmd(message: Message):
             SELECT COUNT(*) FROM codes WHERE owner_id=$1
         """, user.id) or 0
 
+        chart = await get_user_chart(conn, user.id)
+
     # =========================
-    # SAFE PARSE WALLET
+    # SAFE WALLET PARSE
     # =========================
     w = wallet or {}
 
@@ -1763,27 +2064,27 @@ async def account_cmd(message: Message):
     global_type = w.get("global_type") or "-"
     global_account = w.get("global_account") or "-"
 
+    username = f"@{user.username}" if user.username else "Tidak ada"
+
     # =========================
-    # FORMAT CODE LIST
+    # RECENT CODES FORMAT
     # =========================
     if codes:
         code_text = "\n\n".join(
             f"📦 <code>{c['code']}</code>\n"
-            f"📁 File: {c['total_media']} | 💾 Size: {(c['total_size'] or 0)/1048576:.2f} MB\n"
+            f"📁 File: {c['total_media']} | 💾 {(c['total_size'] or 0)/1048576:.2f} MB\n"
             f"⚡ Status: {c['status']}"
             for c in codes
         )
     else:
         code_text = "❌ Belum ada code"
 
-    username = f"@{user.username}" if user.username else "Tidak ada"
-
     # =========================
     # MAIN TEXT
     # =========================
     text = (
         "━━━━━━━━━━━━━━━━━━\n"
-        "👤 <b>ACCOUNT DASHBOARD</b>\n"
+        "👤 <b>ACCOUNT DASHBOARD PRO</b>\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
 
         f"🆔 ID       : <code>{user.id}</code>\n"
@@ -1791,7 +2092,7 @@ async def account_cmd(message: Message):
         f"🔗 Username : {username}\n\n"
 
         "━━━━━━━━━━━━━━━━━━\n"
-        "💰 WALLET BALANCE\n"
+        "💰 REALTIME WALLET\n"
         "━━━━━━━━━━━━━━━━━━\n"
 
         f"💵 Saldo   : Rp {saldo:,}\n"
@@ -1801,80 +2102,62 @@ async def account_cmd(message: Message):
         f"🟢 Success : Rp {success:,}\n\n"
 
         "━━━━━━━━━━━━━━━━━━\n"
-        "🏦 BANK ACCOUNT\n"
+        "📊 STATISTIK REALTIME\n"
         "━━━━━━━━━━━━━━━━━━\n"
-
-        f"Bank  : {bank_name}\n"
-        f"No    : {bank_number}\n"
-        f"Owner : {bank_owner}\n\n"
+        f"{chart}\n\n"
 
         "━━━━━━━━━━━━━━━━━━\n"
-        "📱 EWALLET (INDONESIA)\n"
+        "🏦 BANK\n"
         "━━━━━━━━━━━━━━━━━━\n"
-
-        f"Type : {ewallet_type}\n"
-        f"No   : {ewallet_number}\n\n"
+        f"{bank_name} | {bank_number} | {bank_owner}\n\n"
 
         "━━━━━━━━━━━━━━━━━━\n"
-        "🌍 GLOBAL PAYMENT\n"
+        "📱 EWALLET\n"
         "━━━━━━━━━━━━━━━━━━\n"
-
-        f"Type    : {global_type}\n"
-        f"Account : {global_account}\n\n"
+        f"{ewallet_type} | {ewallet_number}\n\n"
 
         "━━━━━━━━━━━━━━━━━━\n"
-        "📊 STATISTIC\n"
+        "🌍 GLOBAL\n"
         "━━━━━━━━━━━━━━━━━━\n"
-
-        f"📦 Total Code : {total_codes}\n\n"
-
-        "━━━━━━━━━━━━━━━━━━\n"
-        "📁 RECENT CODES\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-
-        f"{code_text}\n\n"
+        f"{global_type} | {global_account}\n\n"
 
         "━━━━━━━━━━━━━━━━━━\n"
-        "⚙️ MENU SYSTEM\n"
+        "📦 RECENT CODES\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        "💳 /deposit - Top up saldo (QRIS / Bank / Ewallet)\n"
-        "🏧 /withdraw - Tarik saldo ke bank/ewallet\n"
-        "🏦 /setbank - Atur bank\n"
-        "📱 /setewallet - Atur ewallet\n"
-        "🌍 /setglobal - Atur global wallet (PayPal/USDT)\n"
+        f"{code_text}\n"
     )
 
-    await message.answer(text, parse_mode="HTML")
+    await message.answer(text, parse_mode="HTML", reply_markup=saldo_kb())
+
 
 # =========================
-# WALLET KEYBOARD
+# WALLET KEYBOARD (UPGRADE)
 # =========================
-
-from datetime import datetime
 
 def saldo_kb():
 
     now = datetime.now()
-
     wd_open = 8 <= now.hour < 20
-
-    text = (
-        "💸 Withdraw"
-        if wd_open
-        else "🔒 Withdraw"
-    )
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=text,
-                    callback_data="withdraw"
+                    text="💳 Deposit",
+                    callback_data="deposit"
+                ),
+                InlineKeyboardButton(
+                    text="🏧 Withdraw",
+                    callback_data="withdraw" if wd_open else "closed"
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="📜 Riwayat",
+                    text="📊 Refresh",
+                    callback_data="refresh_account"
+                ),
+                InlineKeyboardButton(
+                    text="📜 History",
                     callback_data="wallet_history"
                 )
             ]
@@ -1883,116 +2166,26 @@ def saldo_kb():
 
 
 # =========================
-# /SALDO (WALLET DASHBOARD)
+# REFRESH ACCOUNT (REALTIME BUTTON)
 # =========================
 
+@router.callback_query(F.data == "refresh_account")
+async def refresh_account(call: CallbackQuery):
+
+    await call.answer("🔄 Refreshing...")
+
+    # re-call command
+    fake_msg = call.message
+    fake_msg.from_user = call.from_user
+
+    await account_cmd(fake_msg)
+# =========================
+# IMPORT
+# =========================
+import time
 from datetime import datetime
 from aiogram import F
-from aiogram.types import Message
-
-
-@router.message(F.text == "/saldo")
-async def saldo_cmd(message: Message):
-
-    user_id = message.from_user.id
-
-    try:
-
-        async with db_pool.acquire() as conn:
-
-            # =========================
-            # GET WALLET DATA (SAFE)
-            # =========================
-            row = await conn.fetchrow(
-                """
-                SELECT
-                    COALESCE(saldo,0) AS saldo,
-                    COALESCE(total_pending,0) AS pending,
-                    COALESCE(total_process,0) AS process,
-                    COALESCE(total_failed,0) AS failed,
-                    COALESCE(total_success,0) AS success
-                FROM wallets
-                WHERE user_id=$1
-                """,
-                user_id
-            )
-
-        # =========================
-        # SAFE DEFAULT
-        # =========================
-        saldo = row["saldo"] if row else 0
-        pending = row["pending"] if row else 0
-        process = row["process"] if row else 0
-        failed = row["failed"] if row else 0
-        success = row["success"] if row else 0
-
-        # =========================
-        # TOTAL AKUMULASI
-        # =========================
-        total = saldo + pending + process + failed + success
-
-        # =========================
-        # WITHDRAW STATUS (TIME WINDOW)
-        # =========================
-        now_hour = datetime.now().hour
-
-        wd_open = 8 <= now_hour < 20
-
-        status = "🟢 OPEN" if wd_open else "🔴 CLOSED"
-
-        # =========================
-        # TEXT OUTPUT
-        # =========================
-        text = (
-            "━━━━━━━━━━━━━━\n"
-            "💰 <b>WALLET DASHBOARD</b>\n"
-            "━━━━━━━━━━━━━━\n\n"
-
-            f"💵 <b>Saldo Utama</b>\n"
-            f"Rp {saldo:,}\n\n"
-
-            "━━━━━━━━━━━━━━\n"
-
-            f"🟡 Pending : Rp {pending:,}\n"
-            f"🔄 Process : Rp {process:,}\n"
-            f"❌ Failed  : Rp {failed:,}\n"
-            f"✅ Success : Rp {success:,}\n\n"
-
-            "━━━━━━━━━━━━━━\n"
-
-            f"📊 <b>Total Akumulasi</b>\n"
-            f"Rp {total:,}\n\n"
-
-            "━━━━━━━━━━━━━━\n"
-
-            f"⏰ Withdraw Status : {status}\n"
-            "🕗 Jam Operasional : 08:00 - 20:00 WIB\n\n"
-
-            "━━━━━━━━━━━━━━\n"
-            "📋 <b>INFO WITHDRAW</b>\n"
-            "━━━━━━━━━━━━━━\n\n"
-
-            "💸 Minimal Withdraw : Rp 10.000\n"
-            "💸 Maksimal Withdraw : Rp 500.000\n\n"
-
-            "⚠️ RULES:\n"
-            "• Saldo harus cukup\n"
-            "• 1 request aktif per user\n"
-            "• Diproses sesuai antrian\n"
-            "• Salah input rekening bukan tanggung jawab sistem\n"
-            "• Withdraw di luar jam kerja otomatis ditolak\n"
-        )
-
-        await message.answer(
-            text,
-            parse_mode="HTML",
-            reply_markup=saldo_kb()  # tombol deposit/withdraw (kalau ada)
-        )
-
-    except Exception as e:
-        print("SALDO ERROR:", e)
-
-        await message.answer("❌ Gagal memuat saldo, coba lagi nanti")
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 
 # =========================
 # CONFIG
@@ -2000,24 +2193,24 @@ async def saldo_cmd(message: Message):
 GROUP_ID = -1003920865154
 MIN_WITHDRAW = 50000
 
-# =========================
-# STORAGE (SIMPLE SAFE MODE)
-# =========================
+USER_COOLDOWN = 2
+user_cache = {}
+
 AUDIT_LOG = []
 PROCESSED_TX = set()
 ACTIVE_LOCK = {}
 
-# =========================
-# ADMIN CHECK (SIMPLE)
-# =========================
 ADMIN_IDS = {6847035364}
 
+# =========================
+# ADMIN CHECK
+# =========================
 def is_admin(user_id: int):
     return user_id in ADMIN_IDS
 
 
 # =========================
-# AUDIT LOG
+# LOG SYSTEM
 # =========================
 def log_action(actor_id, action, target_id=None):
     AUDIT_LOG.append({
@@ -2029,9 +2222,18 @@ def log_action(actor_id, action, target_id=None):
 
 
 # =========================
-# USER INIT
+# USER ADD / UPDATE (ANTI SPAM FIX)
 # =========================
 async def add_user(user_id, username, fullname):
+
+    now = time.time()
+    last = user_cache.get(user_id, 0)
+
+    if now - last < USER_COOLDOWN:
+        return False
+
+    user_cache[user_id] = now
+
     async with db_pool.acquire() as conn:
         await conn.execute(
             """
@@ -2054,12 +2256,14 @@ async def ensure_wallet(conn, user_id):
             user_id,
             saldo,
             total_pending,
+            total_process,
+            total_failed,
             total_success,
             bank_name,
             bank_number,
             bank_owner
         )
-        VALUES ($1,0,0,0,'','','')
+        VALUES ($1,0,0,0,0,0,'','','')
         ON CONFLICT (user_id) DO NOTHING
         """,
         user_id
@@ -2067,9 +2271,112 @@ async def ensure_wallet(conn, user_id):
 
 
 # =========================
-# ADD BALANCE (DEPOSIT)
+# SALDO BUTTON
+# =========================
+def saldo_kb():
+    now = datetime.now()
+    wd_open = 8 <= now.hour < 20
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💸 Withdraw" if wd_open else "🔒 Withdraw",
+                    callback_data="withdraw"
+                ),
+                InlineKeyboardButton(
+                    text="💳 Deposit",
+                    callback_data="deposit"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📜 Riwayat",
+                    callback_data="wallet_history"
+                )
+            ]
+        ]
+    )
+
+
+# =========================
+# /SALDO (UPGRADED DASHBOARD)
+# =========================
+@router.message(F.text == "/saldo")
+async def saldo_cmd(message: Message):
+
+    user_id = message.from_user.id
+
+    try:
+        async with db_pool.acquire() as conn:
+
+            row = await conn.fetchrow(
+                """
+                SELECT
+                    COALESCE(saldo,0) AS saldo,
+                    COALESCE(total_pending,0) AS pending,
+                    COALESCE(total_process,0) AS process,
+                    COALESCE(total_failed,0) AS failed,
+                    COALESCE(total_success,0) AS success
+                FROM wallets
+                WHERE user_id=$1
+                """,
+                user_id
+            )
+
+        saldo = row["saldo"] if row else 0
+        pending = row["pending"] if row else 0
+        process = row["process"] if row else 0
+        failed = row["failed"] if row else 0
+        success = row["success"] if row else 0
+
+        total = saldo + pending + process + failed + success
+
+        now_hour = datetime.now().hour
+        wd_open = 8 <= now_hour < 20
+        status = "🟢 OPEN" if wd_open else "🔴 CLOSED"
+
+        text = (
+            "━━━━━━━━━━━━━━\n"
+            "💰 <b>WALLET DASHBOARD</b>\n"
+            "━━━━━━━━━━━━━━\n\n"
+
+            f"💵 Saldo : Rp {saldo:,}\n\n"
+
+            "━━━━━━━━━━━━━━\n"
+            f"🟡 Pending : Rp {pending:,}\n"
+            f"🔄 Process : Rp {process:,}\n"
+            f"❌ Failed  : Rp {failed:,}\n"
+            f"✅ Success : Rp {success:,}\n\n"
+
+            "━━━━━━━━━━━━━━\n"
+            f"📊 Total : Rp {total:,}\n\n"
+
+            "━━━━━━━━━━━━━━\n"
+            f"⏰ Withdraw : {status}\n"
+            "🕗 08:00 - 20:00 WIB\n\n"
+
+            "━━━━━━━━━━━━━━\n"
+            "💸 Min Withdraw : Rp 10.000\n"
+            "💸 Max Withdraw : Rp 500.000\n"
+        )
+
+        await message.answer(
+            text,
+            parse_mode="HTML",
+            reply_markup=saldo_kb()
+        )
+
+    except Exception as e:
+        print("SALDO ERROR:", e)
+        await message.answer("❌ Gagal memuat saldo")
+
+
+# =========================
+# ADD BALANCE (DEPOSIT SYSTEM)
 # =========================
 async def add_balance(conn, user_id, amount):
+
     await conn.execute(
         """
         UPDATE wallets
@@ -2082,7 +2389,7 @@ async def add_balance(conn, user_id, amount):
 
 
 # =========================
-# CREATE WITHDRAW (USER)
+# CREATE WITHDRAW (SAFE LOCK)
 # =========================
 async def create_withdraw(conn, user_id, amount):
 
@@ -2132,6 +2439,59 @@ async def create_withdraw(conn, user_id, amount):
     )
 
     return True
+# =========================
+# ADMIN CONFIG
+# =========================
+GROUP_ID = -1003920865154
+ADMIN_IDS = {6847035364}
+
+def is_admin(user_id: int):
+    return user_id in ADMIN_IDS
+
+
+# =========================
+# MEMORY STORAGE
+# =========================
+PROCESSED_TX = set()
+ACTIVE_LOCK = {}
+AUDIT_LOG = []
+
+
+# =========================
+# LOG ACTION
+# =========================
+def log_action(actor_id, action, target_id=None, extra=None):
+    AUDIT_LOG.append({
+        "actor": actor_id,
+        "action": action,
+        "target": target_id,
+        "extra": extra,
+        "time": time.time()
+    })
+
+
+# =========================
+# FRAUD DETECTOR (SIMPLE)
+# =========================
+async def fraud_check(conn, user_id, amount):
+    """
+    RULE:
+    - max 3 withdraw per 1 hour
+    - max 500k per request (already enforced elsewhere)
+    """
+
+    rows = await conn.fetch("""
+        SELECT created_at
+        FROM withdraw_requests
+        WHERE user_id=$1
+        ORDER BY id DESC
+        LIMIT 5
+    """, user_id)
+
+    if len(rows) >= 3:
+        return False
+
+    return True
 
 
 # =========================
@@ -2144,55 +2504,69 @@ async def admin_panel(message: Message):
         return await message.answer("🚫 NO ACCESS")
 
     await message.answer(
-        "🛠 ADMIN PANEL ACTIVE\n\n/menu:",
+        "🛠 ADMIN PANEL",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [
-                InlineKeyboardButton(text="📥 Withdraw List", callback_data="wd_list")
+                InlineKeyboardButton("📥 Withdraw List", callback_data="wd_page:0"),
+                InlineKeyboardButton("📊 Statistik", callback_data="admin_stats")
             ],
             [
-                InlineKeyboardButton(text="📜 Audit Log", callback_data="audit")
+                InlineKeyboardButton("📜 Audit Log", callback_data="audit")
             ]
         ])
     )
 
 
 # =========================
-# WITHDRAW LIST
+# WITHDRAW LIST (PAGINATION)
 # =========================
-@router.message(F.text == "/withdrawlist")
-async def withdraw_list(message: Message):
+@router.callback_query(F.data.startswith("wd_page:"))
+async def withdraw_page(call: CallbackQuery):
 
-    if not is_admin(message.from_user.id):
-        return
+    if not is_admin(call.from_user.id):
+        return await call.answer("NO ACCESS")
+
+    page = int(call.data.split(":")[1])
+    limit = 5
+    offset = page * limit
 
     async with db_pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT * FROM withdraw_requests WHERE status='PENDING' ORDER BY id ASC LIMIT 20"
-        )
+        rows = await conn.fetch("""
+            SELECT * FROM withdraw_requests
+            WHERE status='PENDING'
+            ORDER BY id ASC
+            LIMIT $1 OFFSET $2
+        """, limit, offset)
+
+        total = await conn.fetchval("""
+            SELECT COUNT(*) FROM withdraw_requests WHERE status='PENDING'
+        """)
 
     if not rows:
-        return await message.answer("📭 No request")
+        return await call.message.edit_text("📭 No request")
+
+    text = "🏧 WITHDRAW LIST\n\n"
 
     for r in rows:
-
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="✅ APPROVE", callback_data=f"wd_ok:{r['id']}"),
-                InlineKeyboardButton(text="❌ REJECT", callback_data=f"wd_no:{r['id']}")
-            ]
-        ])
-
-        await message.answer(
-            f"🏧 WITHDRAW REQUEST\n\n"
+        text += (
+            f"ID: {r['id']}\n"
             f"User: {r['user_id']}\n"
             f"Amount: Rp {r['amount']:,}\n"
-            f"Bank: {r['bank_name']}",
-            reply_markup=kb
+            f"Bank: {r['bank_name']}\n\n"
         )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton("⬅ Prev", callback_data=f"wd_page:{max(page-1,0)}"),
+            InlineKeyboardButton("➡ Next", callback_data=f"wd_page:{page+1}")
+        ]
+    ])
+
+    await call.message.edit_text(text, reply_markup=kb)
 
 
 # =========================
-# APPROVE WITHDRAW (BUY STYLE GROUP)
+# APPROVE WITHDRAW
 # =========================
 @router.callback_query(F.data.startswith("wd_ok:"))
 async def approve_withdraw(call: CallbackQuery):
@@ -2215,42 +2589,45 @@ async def approve_withdraw(call: CallbackQuery):
         if req_id in PROCESSED_TX:
             return await call.answer("Duplicate")
 
+        # FRAUD CHECK
+        ok = await fraud_check(conn, req["user_id"], req["amount"])
+        if not ok:
+            return await call.answer("FRAUD DETECTED")
+
         PROCESSED_TX.add(req_id)
         ACTIVE_LOCK.pop(req["user_id"], None)
 
-        await conn.execute(
-            "UPDATE withdraw_requests SET status='APPROVED' WHERE id=$1",
-            req_id
-        )
+        await conn.execute("""
+            UPDATE withdraw_requests
+            SET status='APPROVED'
+            WHERE id=$1
+        """, req_id)
 
-        await conn.execute(
-            """
+        await conn.execute("""
             UPDATE wallets
             SET total_pending = total_pending - $2,
                 total_success = total_success + $2
             WHERE user_id=$1
-            """,
-            req["user_id"], req["amount"]
+        """, req["user_id"], req["amount"])
+
+    # =========================
+    # NOTIFY USER (REALTIME)
+    # =========================
+    try:
+        await call.message.bot.send_message(
+            req["user_id"],
+            f"✅ WITHDRAW APPROVED\n\n💸 Rp {req['amount']:,}"
         )
+    except:
+        pass
 
     # =========================
-    # BUY STYLE GROUP MESSAGE
+    # GROUP LOG
     # =========================
-    text = (
-        "━━━━━━━━━━━━━━\n"
-        "💰 TRANSACTION SUCCESS\n"
-        "━━━━━━━━━━━━━━\n\n"
-        f"🆔 User ID   : {req['user_id']}\n"
-        f"💸 Type      : WITHDRAW\n"
-        f"💵 Amount    : Rp {req['amount']:,}\n"
-        f"🏦 Method    : BANK TRANSFER\n\n"
-        "━━━━━━━━━━━━━━\n"
-        "🟢 STATUS    : APPROVED\n"
-        f"⏰ Time      : {time.strftime('%H:%M WIB')}\n"
-        "━━━━━━━━━━━━━━"
+    await call.message.bot.send_message(
+        GROUP_ID,
+        f"🟢 APPROVED WITHDRAW\nUser: {req['user_id']}\nAmount: Rp {req['amount']:,}"
     )
-
-    await call.message.bot.send_message(GROUP_ID, text)
 
     log_action(call.from_user.id, "APPROVE_WITHDRAW", req["user_id"])
 
@@ -2258,7 +2635,7 @@ async def approve_withdraw(call: CallbackQuery):
 
 
 # =========================
-# REJECT WITHDRAW (BUY STYLE GROUP)
+# REJECT WITHDRAW
 # =========================
 @router.callback_query(F.data.startswith("wd_no:"))
 async def reject_withdraw(call: CallbackQuery):
@@ -2284,52 +2661,99 @@ async def reject_withdraw(call: CallbackQuery):
         PROCESSED_TX.add(req_id)
         ACTIVE_LOCK.pop(req["user_id"], None)
 
-        await conn.execute(
-            """
+        await conn.execute("""
             UPDATE wallets
             SET saldo = saldo + $2,
                 total_pending = total_pending - $2
             WHERE user_id=$1
-            """,
-            req["user_id"], req["amount"]
-        )
+        """, req["user_id"], req["amount"])
 
-        await conn.execute(
-            "UPDATE withdraw_requests SET status='REJECTED' WHERE id=$1",
-            req_id
-        )
+        await conn.execute("""
+            UPDATE withdraw_requests
+            SET status='REJECTED'
+            WHERE id=$1
+        """, req_id)
 
     # =========================
-    # BUY STYLE GROUP MESSAGE
+    # NOTIFY USER (REALTIME)
     # =========================
-    text = (
-        "━━━━━━━━━━━━━━\n"
-        "💰 TRANSACTION FAILED\n"
-        "━━━━━━━━━━━━━━\n\n"
-        f"🆔 User ID   : {req['user_id']}\n"
-        f"💸 Type      : WITHDRAW\n"
-        f"💵 Amount    : Rp {req['amount']:,}\n"
-        f"🏦 Method    : BANK TRANSFER\n\n"
-        "━━━━━━━━━━━━━━\n"
-        "🔴 STATUS    : REJECTED\n"
-        "💡 Reason    : Manual review\n"
-        f"⏰ Time      : {time.strftime('%H:%M WIB')}\n"
-        "━━━━━━━━━━━━━━"
+    try:
+        await call.message.bot.send_message(
+            req["user_id"],
+            f"❌ WITHDRAW REJECTED\n\n💸 Rp {req['amount']:,}"
+        )
+    except:
+        pass
+
+    # =========================
+    # GROUP LOG
+    # =========================
+    await call.message.bot.send_message(
+        GROUP_ID,
+        f"🔴 REJECTED WITHDRAW\nUser: {req['user_id']}\nAmount: Rp {req['amount']:,}"
     )
-
-    await call.message.bot.send_message(GROUP_ID, text)
 
     log_action(call.from_user.id, "REJECT_WITHDRAW", req["user_id"])
 
     await call.message.edit_text(f"❌ REJECTED ID {req_id}")
+
+
+# =========================
+# ADMIN STATISTIC
+# =========================
+@router.callback_query(F.data == "admin_stats")
+async def admin_stats(call: CallbackQuery):
+
+    if not is_admin(call.from_user.id):
+        return await call.answer("NO ACCESS")
+
+    async with db_pool.acquire() as conn:
+
+        today_withdraw = await conn.fetchval("""
+            SELECT COALESCE(SUM(amount),0)
+            FROM withdraw_requests
+            WHERE status='APPROVED'
+        """)
+
+        total_users = await conn.fetchval("""
+            SELECT COUNT(*) FROM users
+        """)
+
+    text = (
+        "📊 ADMIN STATISTICS\n\n"
+        f"👥 Users: {total_users}\n"
+        f"💸 Total Withdraw: Rp {today_withdraw:,}\n"
+    )
+
+    await call.message.edit_text(text)
         
 # =========================
-# VIP KEYBOARD
+# VIP CONFIG
 # =========================
-def vip_kb():
+VIP_PRICE = 50000
+VIP_DURATION_DAYS = 30
+
+VIP_ORDER_LOCK = set()
+PAID_VIP_USERS = set()  # kalau pakai DB, ganti ini
+
+ADMIN_ID = 6847035364
+
+
+# =========================
+# VIP KEYBOARD (START BUY)
+# =========================
+def vip_kb(user_id: int):
+
+    pay_code = f"vip_{user_id}_{int(time.time())}"
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💎 BUY VIP NOW",
+                    callback_data=f"vip_buy:{pay_code}"
+                )
+            ],
             [
                 InlineKeyboardButton(
                     text="💬 CHAT ADMIN VIP",
@@ -2344,11 +2768,15 @@ def vip_kb():
             ]
         ]
     )
+
+
 # =========================
-# VIP COMMAND
+# /VIP COMMAND
 # =========================
 @router.message(F.text == "/vip")
 async def vip_cmd(message: Message):
+
+    user_id = message.from_user.id
 
     text = (
         "💎 <b>VIP ACCESS</b>\n\n"
@@ -2361,24 +2789,116 @@ async def vip_cmd(message: Message):
         "⚡ Anti Limit System\n"
         "⚡ Full Media Support\n\n"
         "━━━━━━━━━━━━━━\n"
-        "📦 <b>STORAGE INFO</b>\n"
-        "━━━━━━━━━━━━━━\n"
-        "📁 Media disimpan di channel database\n"
-        "🔒 Aman via CODE system\n\n"
+        "💰 <b>PRICE</b>\n"
+        f"Rp {VIP_PRICE:,} / {VIP_DURATION_DAYS} days\n\n"
         "━━━━━━━━━━━━━━\n"
         "💀 <b>NOTICE</b>\n"
         "━━━━━━━━━━━━━━\n"
-        "• VIP = akses, bukan privilege manja\n"
-        "• Semua tetap pakai sistem\n"
-        "• Salah pakai = tanggung sendiri 😏"
+        "• VIP aktif otomatis setelah pembayaran\n"
+        "• Tidak refund\n"
+        "• Sistem anti abuse aktif\n"
     )
 
     await message.answer(
         text,
-        reply_markup=vip_kb(),
-        parse_mode="HTML",
-        disable_web_page_preview=True
+        reply_markup=vip_kb(user_id),
+        parse_mode="HTML"
     )
+
+
+# =========================
+# BUY VIP CLICK
+# =========================
+@router.callback_query(F.data.startswith("vip_buy:"))
+async def vip_buy(call: CallbackQuery):
+
+    user_id = call.from_user.id
+    pay_code = call.data.split(":")[1]
+
+    # =========================
+    # ANTI DOUBLE ORDER
+    # =========================
+    if user_id in VIP_ORDER_LOCK:
+        return await call.answer("⏳ Order masih diproses")
+
+    VIP_ORDER_LOCK.add(user_id)
+
+    try:
+        # =========================
+        # CHECK ALREADY VIP
+        # =========================
+        if user_id in PAID_VIP_USERS:
+            return await call.answer("✅ Kamu sudah VIP")
+
+        # =========================
+        # PAYMENT LINK (BAYARGG / QRIS)
+        # =========================
+        pay_url = f"https://your-payment-link.com/pay?vip_code={pay_code}"
+
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="💳 BAYAR VIP",
+                        url=pay_url
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="📩 CHECK STATUS",
+                        callback_data=f"vip_check:{pay_code}"
+                    )
+                ]
+            ]
+        )
+
+        await call.message.edit_text(
+            "💳 <b>VIP PAYMENT</b>\n\n"
+            f"💰 Amount: Rp {VIP_PRICE:,}\n"
+            "⏳ Status: PENDING\n\n"
+            "Klik tombol di bawah untuk bayar:",
+            reply_markup=kb,
+            parse_mode="HTML"
+        )
+
+    finally:
+        VIP_ORDER_LOCK.discard(user_id)
+
+    await call.answer()
+
+
+# =========================
+# CHECK PAYMENT STATUS
+# =========================
+@router.callback_query(F.data.startswith("vip_check:"))
+async def vip_check(call: CallbackQuery):
+
+    user_id = call.from_user.id
+
+    # =========================
+    # SIMULASI PAYMENT CHECK
+    # =========================
+    paid = False  # <-- nanti ganti webhook / DB check
+
+    if paid:
+        PAID_VIP_USERS.add(user_id)
+
+        await call.message.edit_text(
+            "✅ <b>VIP ACTIVATED</b>\n\n"
+            "🎉 Selamat kamu sekarang VIP!\n",
+            parse_mode="HTML"
+        )
+
+        # =========================
+        # NOTIF ADMIN
+        # =========================
+        await call.bot.send_message(
+            ADMIN_ID,
+            f"💎 VIP PAID\nUser: {user_id}"
+        )
+
+    else:
+        await call.answer("⏳ Payment belum terdeteksi", show_alert=True)
 
 
 # =========================
@@ -2387,17 +2907,22 @@ async def vip_cmd(message: Message):
 @router.callback_query(F.data == "vip_cancel")
 async def vip_cancel(call: CallbackQuery):
 
-    try:
-        await call.message.edit_text(
-            "❌ <b>VIP CLOSED</b>\n\n"
-            "😏 Balik ke mode gratisan.\n"
-            "Kalau serius, jangan cuma klik.",
-            parse_mode="HTML"
-        )
-    except:
-        pass
+    await call.message.edit_text(
+        "❌ <b>VIP CLOSED</b>\n\n"
+        "😏 Mungkin lain kali.",
+        parse_mode="HTML"
+    )
 
     await call.answer()
+# =========================
+# ADMIN CONFIG (PRO MAX)
+# =========================
+SUPERADMINS = {6847035364}
+ADMINS = set(SUPERADMINS)
+
+ADMIN_LOG = []
+CMD_LOCK = {}
+
 # =========================
 # ADMIN CHECK
 # =========================
@@ -2405,96 +2930,102 @@ def is_admin(user_id: int):
     return user_id in ADMINS
 
 
+def is_superadmin(user_id: int):
+    return user_id in SUPERADMINS
+
+
 # =========================
-# ADD ADMIN
+# LOG SYSTEM
+# =========================
+def log_admin(action, actor, target=None):
+    ADMIN_LOG.append({
+        "action": action,
+        "actor": actor,
+        "target": target,
+        "time": time.time()
+    })
+
+
+# =========================
+# RATE LIMIT ADMIN CMD
+# =========================
+def admin_cooldown(user_id: int):
+    now = time.time()
+    last = CMD_LOCK.get(user_id, 0)
+
+    if now - last < 2:
+        return True
+
+    CMD_LOCK[user_id] = now
+    return False
+
+
+# =========================
+# ADD ADMIN (SAFE MAX)
 # =========================
 @router.message(F.text.startswith("/addadmin"))
 async def add_admin(message: Message):
 
-    if not is_admin(message.from_user.id):
-        return await message.answer(
-            "🚫 ACCESS DENIED\n\nLu siapa 😏"
-        )
+    uid = message.from_user.id
+
+    if not is_admin(uid):
+        return await message.answer("🚫 ACCESS DENIED")
+
+    if admin_cooldown(uid):
+        return await message.answer("⏳ Slow down")
 
     parts = message.text.split()
-
     if len(parts) != 2:
-        return await message.answer(
-            "❌ Format:\n/addadmin <user_id>"
-        )
+        return await message.answer("❌ Format:\n/addadmin <user_id>")
 
-    # =========================
-    # VALIDATE
-    # =========================
     try:
-        uid = int(parts[1])
+        new_id = int(parts[1])
     except:
-        return await message.answer("❌ ID harus angka")
+        return await message.answer("❌ Invalid ID")
 
-    # =========================
-    # PREVENT DUPLICATE
-    # =========================
-    if uid in ADMINS:
-        return await message.answer(
-            "⚠️ Sudah admin 😏"
-        )
+    if new_id in ADMINS:
+        return await message.answer("⚠️ Already admin")
 
-    # =========================
-    # ADD
-    # =========================
-    ADMINS.add(uid)
+    ADMINS.add(new_id)
+    log_admin("ADD_ADMIN", uid, new_id)
 
-    print(f"[ADMIN] Added: {uid} by {message.from_user.id}")
-
-    await message.answer(
-        f"💀 ADMIN ADDED\n\nID: {uid}"
-    )
+    await message.answer(f"💀 ADMIN ADDED\nID: {new_id}")
 
 
 # =========================
-# REMOVE ADMIN (WAJIB ADA)
+# REMOVE ADMIN (SUPER SAFE)
 # =========================
 @router.message(F.text.startswith("/deladmin"))
 async def del_admin(message: Message):
 
-    if not is_admin(message.from_user.id):
-        return await message.answer("🚫 No access")
+    uid = message.from_user.id
+
+    if not is_superadmin(uid):
+        return await message.answer("🚫 ONLY SUPERADMIN")
 
     parts = message.text.split()
-
     if len(parts) != 2:
-        return await message.answer(
-            "❌ Format:\n/deladmin <user_id>"
-        )
+        return await message.answer("❌ Format:\n/deladmin <user_id>")
 
     try:
-        uid = int(parts[1])
+        target = int(parts[1])
     except:
-        return await message.answer("❌ ID invalid")
+        return await message.answer("❌ Invalid ID")
 
-    # =========================
-    # PROTECT
-    # =========================
-    if uid == message.from_user.id:
-        return await message.answer(
-            "⚠️ Gak bisa hapus diri sendiri 😏"
-        )
+    if target in SUPERADMINS:
+        return await message.answer("🛑 Cannot remove superadmin")
 
-    if uid not in ADMINS:
-        return await message.answer(
-            "❌ Bukan admin"
-        )
+    if target not in ADMINS:
+        return await message.answer("❌ Not admin")
 
-    ADMINS.remove(uid)
+    ADMINS.remove(target)
+    log_admin("REMOVE_ADMIN", uid, target)
 
-    print(f"[ADMIN] Removed: {uid} by {message.from_user.id}")
+    await message.answer(f"💀 ADMIN REMOVED\nID: {target}")
 
-    await message.answer(
-        f"💀 ADMIN REMOVED\n\nID: {uid}"
-    )
 
 # =========================
-# STATISTIC (UPGRADE)
+# STATISTICS MAX
 # =========================
 @router.message(F.text == "/stat")
 async def stat_cmd(message: Message):
@@ -2513,26 +3044,36 @@ async def stat_cmd(message: Message):
                 "SELECT COALESCE(SUM(total_size),0) FROM codes"
             ) or 0
 
+            withdraw_total = await conn.fetchval(
+                "SELECT COALESCE(SUM(amount),0) FROM withdraw_requests WHERE status='APPROVED'"
+            ) or 0
+
+            pending = await conn.fetchval(
+                "SELECT COUNT(*) FROM withdraw_requests WHERE status='PENDING'"
+            ) or 0
+
     except Exception as e:
         print("STAT ERROR:", e)
-        return await message.answer("⚠️ DATABASE ERROR")
+        return await message.answer("⚠️ DB ERROR")
 
     mb = total_size / (1024 * 1024)
 
     await message.answer(
-        "📊 <b>SYSTEM STATISTICS</b>\n\n"
+        "📊 <b>ADMIN DASHBOARD MAX</b>\n\n"
         "━━━━━━━━━━━━━━\n"
-        f"👤 Users   : {users}\n"
-        f"🔑 Codes   : {codes}\n"
-        f"📦 Media   : {media}\n"
-        f"💾 Storage : {mb:.2f} MB\n"
+        f"👤 Users        : {users}\n"
+        f"🔑 Codes        : {codes}\n"
+        f"📦 Media        : {media}\n"
+        f"💾 Storage      : {mb:.2f} MB\n\n"
+        f"💸 Total WD     : Rp {withdraw_total:,}\n"
+        f"⏳ Pending WD   : {pending}\n"
         "━━━━━━━━━━━━━━",
         parse_mode="HTML"
     )
 
 
 # =========================
-# BROADCAST (DEWA VERSION)
+# BROADCAST MAX (CHUNK + SAFE)
 # =========================
 @router.message(F.text.startswith("/broadcast"))
 async def broadcast_cmd(message: Message):
@@ -2541,220 +3082,202 @@ async def broadcast_cmd(message: Message):
         return await message.answer("🚫 ACCESS DENIED")
 
     text = message.text.replace("/broadcast", "").strip()
-
     if not text:
         return await message.answer("❌ Format:\n/broadcast pesan")
 
-    # =========================
-    # LOAD USERS
-    # =========================
     try:
         async with db_pool.acquire() as conn:
             users = await conn.fetch("SELECT user_id FROM users")
-    except Exception as e:
-        print("BC ERROR:", e)
-        return await message.answer("⚠️ DATABASE ERROR")
+    except:
+        return await message.answer("⚠️ DB ERROR")
 
     total = len(users)
     sent = 0
     failed = 0
 
-    start_time = time.time()
-
     status = await message.answer(
-        f"📡 <b>BROADCAST STARTED</b>\n\n"
-        f"👥 Total user: {total}\n"
-        f"⏳ Progress: 0%\n\n"
-        "💀 System running...",
+        f"📡 <b>BROADCAST START</b>\n\n"
+        f"👥 Users: {total}\n"
+        f"⏳ Progress: 0%",
         parse_mode="HTML"
     )
 
+    start = time.time()
+
     # =========================
-    # LOOP
+    # CHUNK SEND (ANTI FLOOD MAX)
     # =========================
-    for i, user in enumerate(users, start=1):
+    batch_size = 30
+
+    for i in range(0, total, batch_size):
+
+        batch = users[i:i+batch_size]
+
+        for u in batch:
+            try:
+                await message.bot.send_message(u["user_id"], text)
+                sent += 1
+            except:
+                failed += 1
+
+        percent = ((i + batch_size) / total) * 100
 
         try:
-            await message.bot.send_message(
-                chat_id=user["user_id"],
-                text=text
+            await status.edit_text(
+                f"📡 <b>BROADCAST RUNNING</b>\n\n"
+                f"👥 Total   : {total}\n"
+                f"📤 Sent    : {sent}\n"
+                f"❌ Failed  : {failed}\n"
+                f"⏳ Progress: {min(percent,100):.1f}%"
             )
-            sent += 1
+        except:
+            pass
 
-        except Exception:
-            failed += 1
+        await asyncio.sleep(1.0)  # stable throttle
 
-        # =========================
-        # SMART DELAY (ANTI BANNED)
-        # =========================
-        if i % 20 == 0:
-            await asyncio.sleep(1.2)  # heavy pause
-        else:
-            await asyncio.sleep(random.uniform(0.03, 0.1))  # normal delay
-
-        # =========================
-        # UPDATE PROGRESS (SETIAP 25 USER)
-        # =========================
-        if i % 25 == 0:
-            percent = (i / total) * 100
-
-            try:
-                await status.edit_text(
-                    f"📡 <b>BROADCAST RUNNING</b>\n\n"
-                    f"👥 Total   : {total}\n"
-                    f"📤 Sent    : {sent}\n"
-                    f"❌ Failed  : {failed}\n"
-                    f"⏳ Progress: {percent:.1f}%\n\n"
-                    "⚡ Please wait...",
-                    parse_mode="HTML"
-                )
-            except:
-                pass
-
-    # =========================
-    # DONE
-    # =========================
-    duration = time.time() - start_time
+    duration = time.time() - start
 
     await status.edit_text(
-        "📡 <b>BROADCAST FINISHED</b>\n\n"
+        "📡 <b>BROADCAST DONE</b>\n\n"
         "━━━━━━━━━━━━━━\n"
-        f"👥 Total   : {total}\n"
-        f"📤 Sent    : {sent}\n"
-        f"❌ Failed  : {failed}\n"
-        f"⏱ Time    : {duration:.1f}s\n"
-        "━━━━━━━━━━━━━━\n\n"
-        "💀 Mission complete 😏",
+        f"👥 Total  : {total}\n"
+        f"📤 Sent   : {sent}\n"
+        f"❌ Failed : {failed}\n"
+        f"⏱ Time   : {duration:.1f}s\n"
+        "━━━━━━━━━━━━━━",
         parse_mode="HTML"
     )
 
 # =========================
-# HELP TEXT
+# HELP KEYBOARD UI
 # =========================
-HELP_TEXT = """
-<b>🔥 TZY FILE BOT — HELP MENU 🔥</b>
+def help_kb():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📤 Upload", callback_data="help:upload"),
+                InlineKeyboardButton(text="📥 Get File", callback_data="help:get")
+            ],
+            [
+                InlineKeyboardButton(text="👤 Account", callback_data="help:account"),
+                InlineKeyboardButton(text="💎 VIP", callback_data="help:vip")
+            ],
+            [
+                InlineKeyboardButton(text="🛠 Admin", callback_data="help:admin")
+            ],
+            [
+                InlineKeyboardButton(text="🏠 Main Menu", callback_data="menu:start")
+            ]
+        ]
+    )
 
-Selamat datang di <b>TZY FILE BOT</b>
-Bot untuk upload & ambil file pakai <code>CODE</code>
-
-━━━━━━━━━━━━━━
-📤 <b>UPLOAD FILE</b>
-━━━━━━━━━━━━━━
-1. Tekan <b>📤 Up File</b>
-2. Kirim media
-3. Tekan <b>✅ DONE</b>
-4. Bot kasih CODE
-
-⚠️ Jangan lupa DONE!
-
-━━━━━━━━━━━━━━
-📥 <b>GET FILE</b>
-━━━━━━━━━━━━━━
-1. Tekan <b>📥 Get File</b>
-2. Kirim CODE
-3. File dikirim otomatis
-
-❌ Kalau error:
-• CODE salah
-• Tidak ditemukan
-
-━━━━━━━━━━━━━━
-👤 <b>ACCOUNT</b>
-━━━━━━━━━━━━━━
-• ID
-• Nama
-• Username
-
-━━━━━━━━━━━━━━
-💎 <b>VIP</b>
-━━━━━━━━━━━━━━
-⚡ Unlimited Upload  
-⚡ Faster Access  
-⚡ Priority System  
-
-━━━━━━━━━━━━━━
-🛠 <b>ADMIN</b>
-━━━━━━━━━━━━━━
-<code>/stat</code> → statistik  
-<code>/broadcast</code> → kirim ke semua user  
-<code>/addadmin</code> → tambah admin  
-
-━━━━━━━━━━━━━━
-⚠ <b>RULE</b>
-━━━━━━━━━━━━━━
-❌ Spam  
-❌ Abuse  
-❌ Flood  
-
-━━━━━━━━━━━━━━
-💀 <b>NOTE</b>
-━━━━━━━━━━━━━━
-• Bot bukan cenayang 😏  
-• Salah input = salah sendiri  
-• Simpan CODE baik-baik  
-
-━━━━━━━━━━━━━━
-🚀 <b>READY</b>
-━━━━━━━━━━━━━━
-"""
 
 # =========================
-# HELP HANDLER
+# HELP COMMAND
 # =========================
 @router.message(F.text == "/help")
 async def help_cmd(message: Message):
 
-    await asyncio.sleep(0.2)
-
     await message.answer(
-        HELP_TEXT,
-        parse_mode="HTML"
+        "🔥 <b>HELP CENTER</b>\n\nPilih menu di bawah 👇",
+        parse_mode="HTML",
+        reply_markup=help_kb()
     )
 
 
 @router.message(F.text == "❓ Help")
 async def help_button(message: Message):
 
-    await asyncio.sleep(0.2)
-
     await message.answer(
-        HELP_TEXT,
-        parse_mode="HTML"
+        "🔥 <b>HELP CENTER</b>\n\nPilih menu 👇",
+        parse_mode="HTML",
+        reply_markup=help_kb()
     )
 
-# =========================
-# CLEANUP MEMORY
-# =========================
-
-async def cleanup_task():
-
-    while True:
-
-        await asyncio.sleep(600)
-
-        now = time.time()
-
-        for uid in list(user_last_action):
-
-            # 6 JAM TIDAK AKTIF
-            if now - user_last_action[uid] > 21600:
-
-                user_last_action.pop(uid, None)
-
-                page_history.pop(uid, None)
-
-                user_states.pop(uid, None)
-
-                upload_sessions.pop(uid, None)
-
-                last_edit_time.pop(uid, None)
-
-                page_cooldown.pop(uid, None)
-
-                user_click_lock.pop(uid, None)
 
 # =========================
-# STARTUP
+# HELP ROUTER
+# =========================
+@router.callback_query(F.data.startswith("help:"))
+async def help_router(call: CallbackQuery):
+
+    menu = call.data.split(":")[1]
+
+    if menu == "upload":
+        text = (
+            "📤 <b>UPLOAD FILE</b>\n\n"
+            "1. Klik Up File\n"
+            "2. Kirim media\n"
+            "3. Klik DONE\n"
+            "4. Dapat CODE"
+        )
+
+    elif menu == "get":
+        text = (
+            "📥 <b>GET FILE</b>\n\n"
+            "1. Klik Get File\n"
+            "2. Kirim CODE\n"
+            "3. File otomatis dikirim"
+        )
+
+    elif menu == "account":
+        text = (
+            "👤 <b>ACCOUNT</b>\n\n"
+            "• ID User\n"
+            "• Username\n"
+            "• Statistik File"
+        )
+
+    elif menu == "vip":
+        text = (
+            "💎 <b>VIP SYSTEM</b>\n\n"
+            "⚡ Unlimited Upload\n"
+            "⚡ Fast Access\n"
+            "⚡ Priority System\n\n"
+            "Gunakan /vip untuk upgrade"
+        )
+
+    elif menu == "admin":
+
+        if not is_admin(call.from_user.id):
+            return await call.answer("NO ACCESS", show_alert=True)
+
+        text = (
+            "🛠 <b>ADMIN PANEL</b>\n\n"
+            "/stat → statistik\n"
+            "/broadcast → kirim pesan\n"
+            "/addadmin → tambah admin\n"
+            "/deladmin → hapus admin"
+        )
+
+    else:
+        text = "❌ Menu tidak ditemukan"
+
+    await call.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=help_kb()
+    )
+
+    await call.answer()
+
+
+# =========================
+# BACK TO MAIN MENU
+# =========================
+@router.callback_query(F.data == "menu:start")
+async def back_to_start(call: CallbackQuery):
+
+    await call.message.edit_text(
+        "🔥 <b>MAIN MENU</b>\n\nPilih menu di bawah 👇",
+        parse_mode="HTML",
+        reply_markup=help_kb()
+    )
+
+    await call.answer()
+
+# =========================
+# STARTUP (UPGRADED PRODUCTION VERSION)
 # =========================
 async def main():
 
@@ -2764,35 +3287,39 @@ async def main():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL tidak ditemukan")
 
-    # =========================
-    # INIT BOT
-    # =========================
     bot = Bot(BOT_TOKEN)
-
-    # HAPUS WEBHOOK LAMA
-    await bot.delete_webhook(
-        drop_pending_updates=True
-    )
-
-    me = await bot.get_me()
-
-    print(f"🤖 LOGIN: @{me.username}")
-
     dp = Dispatcher()
+
     dp.include_router(router)
 
     # =========================
-    # DATABASE
+    # INIT SAFE SHUTDOWN FLAG
+    # =========================
+    shutdown_event = asyncio.Event()
+
+    # =========================
+    # WEBHOOK CLEANUP
+    # =========================
+    await bot.delete_webhook(drop_pending_updates=True)
+
+    me = await bot.get_me()
+    print(f"🤖 LOGIN: @{me.username}")
+
+    # =========================
+    # INIT DATABASE
     # =========================
     await init_db()
+    print("🗄 DATABASE READY")
 
     # =========================
-    # BACKGROUND TASK
+    # BACKGROUND TASKS (SAFE TRACKING)
     # =========================
-    asyncio.create_task(cleanup_task())
+    tasks = set()
 
-    print("🔥 BOT STARTED")
-    print("🚀 START POLLING")
+    cleanup_task_runner = asyncio.create_task(cleanup_task())
+    tasks.add(cleanup_task_runner)
+
+    print("⚙️ BACKGROUND TASK STARTED")
 
     # =========================
     # FASTAPI SERVER
@@ -2803,34 +3330,53 @@ async def main():
         app=app,
         host="0.0.0.0",
         port=port,
-        log_level="info"
+        log_level="info",
+        loop="asyncio"
     )
 
     server = uvicorn.Server(config)
 
     try:
+        print("🚀 BOT STARTING...")
 
         await asyncio.gather(
             dp.start_polling(bot),
             server.serve()
         )
 
-    except Exception as e:
+    except asyncio.CancelledError:
+        print("⚠️ TASK CANCELLED")
 
+    except Exception as e:
         print("❌ BOT ERROR:", repr(e))
 
     finally:
+        print("💀 SHUTDOWN INITIATED")
 
-        print("💀 SHUTDOWN")
+        # =========================
+        # STOP BACKGROUND TASKS
+        # =========================
+        for task in tasks:
+            task.cancel()
 
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+        # =========================
+        # CLOSE DATABASE
+        # =========================
         try:
             if db_pool:
                 await db_pool.close()
+                print("🗄 DB CLOSED")
         except Exception as e:
             print("DB CLOSE ERROR:", e)
 
+        # =========================
+        # CLOSE BOT SESSION
+        # =========================
         try:
             await bot.session.close()
+            print("🤖 BOT CLOSED")
         except Exception as e:
             print("BOT CLOSE ERROR:", e)
 
@@ -2839,4 +3385,7 @@ async def main():
 # RUN
 # =========================
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("👋 MANUAL STOP (CTRL+C)")
