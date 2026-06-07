@@ -1325,6 +1325,21 @@ async def account_cmd(message: Message):
 
     async with db_pool.acquire() as conn:
 
+        # =========================
+        # WALLET AUTO CREATE (ANTI NULL ERROR)
+        # =========================
+        await conn.execute(
+            """
+            INSERT INTO wallets (user_id)
+            VALUES ($1)
+            ON CONFLICT (user_id) DO NOTHING
+            """,
+            user.id
+        )
+
+        # =========================
+        # GET DATA
+        # =========================
         codes = await conn.fetch(
             """
             SELECT code, total_media, total_size
@@ -1345,9 +1360,6 @@ async def account_cmd(message: Message):
             user.id
         ) or 0
 
-        # =========================
-        # SALDO
-        # =========================
         wallet = await conn.fetchrow(
             """
             SELECT
@@ -1363,45 +1375,30 @@ async def account_cmd(message: Message):
         )
 
     # =========================
-    # WALLET DEFAULT
+    # SAFE WALLET PARSE
     # =========================
-    if wallet:
-        saldo = wallet["saldo"] or 0
-        pending = wallet["total_pending"] or 0
-        process = wallet["total_process"] or 0
-        failed = wallet["total_failed"] or 0
-        success = wallet["total_success"] or 0
-    else:
-        saldo = 0
-        pending = 0
-        process = 0
-        failed = 0
-        success = 0
+    saldo = wallet["saldo"] if wallet and wallet["saldo"] else 0
+    pending = wallet["total_pending"] if wallet and wallet["total_pending"] else 0
+    process = wallet["total_process"] if wallet and wallet["total_process"] else 0
+    failed = wallet["total_failed"] if wallet and wallet["total_failed"] else 0
+    success = wallet["total_success"] if wallet and wallet["total_success"] else 0
 
     # =========================
     # CODE LIST
     # =========================
     if codes:
-
-        code_lines = []
-
-        for c in codes:
-            code_lines.append(
-                f"📦 <code>{c['code']}</code>\n"
-                f"└ {c['total_media']} file"
-            )
-
-        code_text = "\n".join(code_lines)
-
+        code_text = "\n".join(
+            f"📦 <code>{c['code']}</code>\n└ {c['total_media']} file"
+            for c in codes
+        )
     else:
         code_text = "❌ Belum ada code"
 
-    username = (
-        f"@{user.username}"
-        if user.username
-        else "Tidak ada"
-    )
+    username = f"@{user.username}" if user.username else "Tidak ada"
 
+    # =========================
+    # TEXT OUTPUT
+    # =========================
     text = (
         "👤 <b>ACCOUNT INFO</b>\n\n"
 
@@ -1432,10 +1429,7 @@ async def account_cmd(message: Message):
         f"{code_text}"
     )
 
-    await message.answer(
-        text,
-        parse_mode="HTML"
-    )
+    await message.answer(text, parse_mode="HTML")
 
 # =========================
 # WALLET KEYBOARD
