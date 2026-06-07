@@ -47,7 +47,7 @@ ADMINS = set(
     if x.strip().isdigit()
 )
 
-FORCE_CHANNEL = int(os.getenv("FORCE_CHANNEL"))
+
 UPDATE_CHANNEL = os.getenv("UPDATE_CHANNEL")
 NOTIFICATION_CHANNEL = int(os.getenv("NOTIFICATION_CHANNEL"))
 VIP_LINK = os.getenv("VIP_LINK")
@@ -1820,8 +1820,17 @@ async def main():
     # INIT BOT
     # =========================
     bot = Bot(BOT_TOKEN)
-    dp = Dispatcher()
 
+    # HAPUS WEBHOOK LAMA
+    await bot.delete_webhook(
+        drop_pending_updates=True
+    )
+
+    me = await bot.get_me()
+
+    print(f"🤖 LOGIN: @{me.username}")
+
+    dp = Dispatcher()
     dp.include_router(router)
 
     # =========================
@@ -1835,15 +1844,13 @@ async def main():
     asyncio.create_task(cleanup_task())
 
     print("🔥 BOT STARTED")
+    print("🚀 START POLLING")
 
     # =========================
-    # PORT RAILWAY
+    # FASTAPI SERVER
     # =========================
     port = int(os.getenv("PORT", 8000))
 
-    # =========================
-    # UVICORN
-    # =========================
     config = uvicorn.Config(
         app=app,
         host="0.0.0.0",
@@ -1853,43 +1860,31 @@ async def main():
 
     server = uvicorn.Server(config)
 
-    # =========================
-    # RUN BOT + API
-    # =========================
-    polling_task = asyncio.create_task(
-        dp.start_polling(bot)
-    )
-
-    api_task = asyncio.create_task(
-        server.serve()
-    )
-
     try:
+
         await asyncio.gather(
-            polling_task,
-            api_task
+            dp.start_polling(bot),
+            server.serve()
         )
 
     except Exception as e:
-        print("❌ BOT ERROR:", e)
+
+        print("❌ BOT ERROR:", repr(e))
 
     finally:
 
         print("💀 SHUTDOWN")
 
-        polling_task.cancel()
-        api_task.cancel()
-
         try:
             if db_pool:
                 await db_pool.close()
-        except Exception:
-            pass
+        except Exception as e:
+            print("DB CLOSE ERROR:", e)
 
         try:
             await bot.session.close()
-        except Exception:
-            pass
+        except Exception as e:
+            print("BOT CLOSE ERROR:", e)
 
 
 # =========================
