@@ -278,7 +278,7 @@ async def webhook(request: Request):
 # START
 # =========================
 
-@router.message(F.text == "/start")
+@router.message(Command("start"))
 async def start(message: Message, bot: Bot):
 
     user = message.from_user
