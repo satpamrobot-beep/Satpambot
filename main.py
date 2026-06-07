@@ -3316,7 +3316,7 @@ async def main():
     # =========================
     tasks = set()
 
-    cleanup_task_runner = asyncio.create_task(cleanup_task())
+    cleanup_task_runner = asyncio.create_task(cleanup_sessions())
     tasks.add(cleanup_task_runner)
 
     print("⚙️ BACKGROUND TASK STARTED")
