@@ -1317,9 +1317,6 @@ async def account_cmd(message: Message):
 
     user = message.from_user
 
-    # =========================
-    # SAVE USER
-    # =========================
     await add_user(
         user.id,
         user.username or "",
@@ -1340,19 +1337,58 @@ async def account_cmd(message: Message):
         )
 
         total_codes = await conn.fetchval(
-            "SELECT COUNT(*) FROM codes WHERE owner_id = $1",
+            """
+            SELECT COUNT(*)
+            FROM codes
+            WHERE owner_id = $1
+            """,
+            user.id
+        ) or 0
+
+        # =========================
+        # SALDO
+        # =========================
+        wallet = await conn.fetchrow(
+            """
+            SELECT
+                saldo,
+                total_pending,
+                total_process,
+                total_failed,
+                total_success
+            FROM wallets
+            WHERE user_id = $1
+            """,
             user.id
         )
 
     # =========================
-    # FORMAT CODE LIST
+    # WALLET DEFAULT
+    # =========================
+    if wallet:
+        saldo = wallet["saldo"] or 0
+        pending = wallet["total_pending"] or 0
+        process = wallet["total_process"] or 0
+        failed = wallet["total_failed"] or 0
+        success = wallet["total_success"] or 0
+    else:
+        saldo = 0
+        pending = 0
+        process = 0
+        failed = 0
+        success = 0
+
+    # =========================
+    # CODE LIST
     # =========================
     if codes:
+
         code_lines = []
+
         for c in codes:
             code_lines.append(
                 f"📦 <code>{c['code']}</code>\n"
-                f"   └ {c['total_media']} file"
+                f"└ {c['total_media']} file"
             )
 
         code_text = "\n".join(code_lines)
@@ -1360,21 +1396,195 @@ async def account_cmd(message: Message):
     else:
         code_text = "❌ Belum ada code"
 
-    # =========================
-    # FORMAT USER
-    # =========================
-    username = f"@{user.username}" if user.username else "Tidak ada"
+    username = (
+        f"@{user.username}"
+        if user.username
+        else "Tidak ada"
+    )
 
     text = (
         "👤 <b>ACCOUNT INFO</b>\n\n"
+
         f"🆔 <b>ID:</b> <code>{user.id}</code>\n"
         f"👤 <b>Name:</b> {user.full_name}\n"
         f"🔗 <b>Username:</b> {username}\n\n"
-        f"📊 <b>Total Code:</b> {total_codes}\n\n"
-        f"📁 <b>Last Code:</b>\n{code_text}"
+
+        "━━━━━━━━━━━━━━\n"
+        "💰 <b>WALLET</b>\n"
+        "━━━━━━━━━━━━━━\n"
+
+        f"💵 Saldo      : Rp {saldo:,}\n"
+        f"🟡 Pending    : Rp {pending:,}\n"
+        f"🔵 Process    : Rp {process:,}\n"
+        f"🔴 Failed     : Rp {failed:,}\n"
+        f"🟢 Success    : Rp {success:,}\n\n"
+
+        "━━━━━━━━━━━━━━\n"
+        "📊 <b>STATISTIC</b>\n"
+        "━━━━━━━━━━━━━━\n"
+
+        f"📦 Total Code : {total_codes}\n\n"
+
+        "━━━━━━━━━━━━━━\n"
+        "📁 <b>LAST CODE</b>\n"
+        "━━━━━━━━━━━━━━\n"
+
+        f"{code_text}"
     )
 
-    await message.answer(text, parse_mode="HTML")
+    await message.answer(
+        text,
+        parse_mode="HTML"
+    )
+
+# =========================
+# WALLET KEYBOARD
+# =========================
+
+from datetime import datetime
+
+def saldo_kb():
+
+    now = datetime.now()
+
+    wd_open = 8 <= now.hour < 20
+
+    text = (
+        "💸 Withdraw"
+        if wd_open
+        else "🔒 Withdraw"
+    )
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=text,
+                    callback_data="withdraw"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📜 Riwayat",
+                    callback_data="wallet_history"
+                )
+            ]
+        ]
+    )
+
+
+# =========================
+# /SALDO
+# =========================
+
+@router.message(F.text == "/saldo")
+async def saldo_cmd(message: Message):
+
+    user_id = message.from_user.id
+
+    try:
+
+        async with db_pool.acquire() as conn:
+
+            row = await conn.fetchrow(
+                """
+                SELECT
+                    COALESCE(balance,0) AS balance,
+                    COALESCE(total_pending,0) AS pending,
+                    COALESCE(total_process,0) AS process,
+                    COALESCE(total_failed,0) AS failed,
+                    COALESCE(total_success,0) AS success
+                FROM users
+                WHERE user_id=$1
+                """,
+                user_id
+            )
+
+        if not row:
+
+            balance = 0
+            pending = 0
+            process = 0
+            failed = 0
+            success = 0
+
+        else:
+
+            balance = row["balance"]
+            pending = row["pending"]
+            process = row["process"]
+            failed = row["failed"]
+            success = row["success"]
+
+        total = (
+            balance +
+            pending +
+            process +
+            failed +
+            success
+        )
+
+        wd_open = 8 <= datetime.now().hour < 20
+
+        status = (
+            "🟢 OPEN"
+            if wd_open
+            else "🔴 CLOSED"
+        )
+
+        text = (
+            "💰 <b>WALLET USER</b>\n\n"
+
+            "━━━━━━━━━━━━━━\n"
+
+            f"💵 <b>Saldo Utama</b>\n"
+            f"Rp {balance:,}\n\n"
+
+            f"🟡 Pending : Rp {pending:,}\n"
+            f"🔄 Process : Rp {process:,}\n"
+            f"❌ Gagal   : Rp {failed:,}\n"
+            f"✅ Success : Rp {success:,}\n\n"
+
+            "━━━━━━━━━━━━━━\n"
+
+            f"📊 <b>Total Income</b>\n"
+            f"Rp {total:,}\n\n"
+
+            "━━━━━━━━━━━━━━\n"
+
+            f"⏰ Withdraw : {status}\n"
+            f"🕗 Jam      : 08:00 - 20:00 WIB\n\n"
+
+            "━━━━━━━━━━━━━━\n"
+            "📋 <b>DETAIL PENARIKAN</b>\n"
+            "━━━━━━━━━━━━━━\n\n"
+
+            "💸 Minimal : Rp 50.000\n"
+            "💸 Maksimal : Rp 500.000\n\n"
+
+            "⚠️ Note:\n"
+            "• Saldo harus mencukupi\n"
+            "• Maksimal 1 request aktif\n"
+            "• Penarikan diproses saat jam kerja\n"
+            "• Salah rekening bukan tanggung jawab sistem\n"
+            "• Dana dikirim sesuai antrean\n"
+            "• Withdraw di luar jam kerja otomatis ditolak"
+        )
+
+        await message.answer(
+            text,
+            parse_mode="HTML",
+            reply_markup=saldo_kb()
+        )
+
+    except Exception as e:
+
+        print("SALDO ERROR:", e)
+
+        await message.answer(
+            "❌ Gagal memuat saldo"
+        )
+        
 # =========================
 # VIP KEYBOARD
 # =========================
