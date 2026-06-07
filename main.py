@@ -43,6 +43,10 @@ from aiogram.exceptions import (
     TelegramRetryAfter
 )
 
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
+dp.include_router(router)
+
 # =========================
 # LOAD ENV
 # =========================
@@ -214,6 +218,17 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT NOW()
             )
             """)
+            CREATE TABLE IF NOT EXISTS payments(
+    id SERIAL PRIMARY KEY,
+    order_id TEXT UNIQUE,
+    user_id BIGINT,
+    code TEXT,
+    amount BIGINT,
+    status TEXT DEFAULT 'pending',
+    message_id BIGINT,
+    group_message_id BIGINT,
+    expires_at TIMESTAMP
+);
 
         print("✅ Database Ready")
 
