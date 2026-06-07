@@ -143,78 +143,83 @@ db_pool: asyncpg.Pool | None = None
 async def init_db():
     global db_pool
 
-    if db_pool:
+    if db_pool is not None:
         return
 
-    db_pool = await asyncpg.create_pool(
-        DATABASE_URL,
-        min_size=2,
-        max_size=10,
-        command_timeout=30,
-        statement_cache_size=0
-    )
-
-    async with db_pool.acquire() as conn:
-
-        await conn.execute("""
-        CREATE TABLE IF NOT EXISTS users(
-            user_id BIGINT PRIMARY KEY,
-            username TEXT,
-            fullname TEXT,
-            created_at TIMESTAMP DEFAULT NOW()
+    try:
+        db_pool = await asyncpg.create_pool(
+            DATABASE_URL,
+            min_size=1,
+            max_size=10,
+            command_timeout=30,
+            statement_cache_size=0,
         )
-        """)
 
-        await conn.execute("""
-        CREATE TABLE IF NOT EXISTS wallets(
-            user_id BIGINT PRIMARY KEY,
-            saldo BIGINT DEFAULT 0,
-            total_pending BIGINT DEFAULT 0,
-            total_process BIGINT DEFAULT 0,
-            total_failed BIGINT DEFAULT 0,
-            total_success BIGINT DEFAULT 0
-        )
-        """)
+        async with db_pool.acquire() as conn:
 
-        await conn.execute("""
-        CREATE TABLE IF NOT EXISTS codes(
-            id SERIAL PRIMARY KEY,
-            code TEXT UNIQUE,
-            owner_id BIGINT,
-            buyer_id BIGINT,
-            price BIGINT DEFAULT 0,
-            is_paid BOOLEAN DEFAULT FALSE,
-            total_media INT DEFAULT 0,
-            total_size BIGINT DEFAULT 0,
-            created_at TIMESTAMP DEFAULT NOW()
-        )
-        """)
+            await conn.execute("""
+            CREATE TABLE IF NOT EXISTS users(
+                user_id BIGINT PRIMARY KEY,
+                username TEXT,
+                fullname TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+            """)
 
-        await conn.execute("""
-        CREATE TABLE IF NOT EXISTS medias(
-            id SERIAL PRIMARY KEY,
-            code TEXT,
-            file_id TEXT,
-            file_type TEXT,
-            file_size BIGINT DEFAULT 0
-        )
-        """)
+            await conn.execute("""
+            CREATE TABLE IF NOT EXISTS wallets(
+                user_id BIGINT PRIMARY KEY,
+                saldo BIGINT DEFAULT 0,
+                total_pending BIGINT DEFAULT 0,
+                total_process BIGINT DEFAULT 0,
+                total_failed BIGINT DEFAULT 0,
+                total_success BIGINT DEFAULT 0
+            )
+            """)
 
-        await conn.execute("""
-        CREATE TABLE IF NOT EXISTS transactions(
-            id SERIAL PRIMARY KEY,
-            order_id TEXT UNIQUE,
-            user_id BIGINT,
-            code TEXT,
-            amount BIGINT,
-            fee BIGINT DEFAULT 0,
-            net BIGINT DEFAULT 0,
-            status TEXT DEFAULT 'pending',
-            created_at TIMESTAMP DEFAULT NOW()
-        )
-        """)
+            await conn.execute("""
+            CREATE TABLE IF NOT EXISTS codes(
+                id SERIAL PRIMARY KEY,
+                code TEXT UNIQUE NOT NULL,
+                owner_id BIGINT,
+                buyer_id BIGINT,
+                price BIGINT DEFAULT 0,
+                is_paid BOOLEAN DEFAULT FALSE,
+                total_media INTEGER DEFAULT 0,
+                total_size BIGINT DEFAULT 0,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+            """)
 
-    print("✅ Database Ready")
+            await conn.execute("""
+            CREATE TABLE IF NOT EXISTS medias(
+                id SERIAL PRIMARY KEY,
+                code TEXT NOT NULL,
+                file_id TEXT NOT NULL,
+                file_type TEXT NOT NULL,
+                file_size BIGINT DEFAULT 0
+            )
+            """)
+
+            await conn.execute("""
+            CREATE TABLE IF NOT EXISTS transactions(
+                id SERIAL PRIMARY KEY,
+                order_id TEXT UNIQUE NOT NULL,
+                user_id BIGINT NOT NULL,
+                code TEXT,
+                amount BIGINT DEFAULT 0,
+                fee BIGINT DEFAULT 0,
+                net BIGINT DEFAULT 0,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+            """)
+
+        print("✅ Database Ready")
+
+    except Exception as e:
+        print(f"❌ Database Error: {e}")
+        raise
 
 # =========================
 # CACHE / MEMORY
@@ -243,24 +248,25 @@ payment_cache = {}
 user_upload_lock = {}
 user_download_lock = {}
 
-
 # =========================
 # APP
 # =========================
 
 app = FastAPI()
+
 # =========================
-# ANTI SPAM + RATE LIMIT SYSTEM
+# ANTI SPAM + RATE LIMIT
 # =========================
 
 GLOBAL_DELAY = 0.08
-last_global_send = 0
-
 USER_DELAY = 1.5
+
+last_global_send = 0.0
 
 
 def user_limit(user_id: int) -> bool:
     now = time.time()
+
     last = user_last_action.get(user_id, 0)
 
     if now - last < USER_DELAY:
@@ -274,22 +280,16 @@ async def global_throttle():
     global last_global_send
 
     now = time.time()
-    diff = now - last_global_send
 
-    if diff < GLOBAL_DELAY:
-        await asyncio.sleep(GLOBAL_DELAY - diff)
+    if now - last_global_send < GLOBAL_DELAY:
+        await asyncio.sleep(
+            GLOBAL_DELAY - (now - last_global_send)
+        )
 
     last_global_send = time.time()
 
 
 async def safe_send(func, *args, **kwargs):
-    """
-    SAFE TELEGRAM SENDER
-    - anti flood
-    - retry handling
-    - stable for broadcast + payment notif
-    """
-
     for attempt in range(5):
         try:
             await global_throttle()
@@ -303,8 +303,8 @@ async def safe_send(func, *args, **kwargs):
             return None
 
         except Exception as e:
-            print(f"[ERROR] attempt {attempt + 1}: {e}")
-            await asyncio.sleep(1 + attempt)
+            print(f"[ERROR {attempt + 1}] {e}")
+            await asyncio.sleep(attempt + 1)
 
     return None
 
@@ -314,7 +314,6 @@ async def safe_send(func, *args, **kwargs):
 # =========================
 
 router = Router()
-
 
 # =========================
 # KEYBOARD
@@ -2219,32 +2218,6 @@ def log_action(actor_id, action, target_id=None):
         "target": target_id,
         "time": time.time()
     })
-
-
-# =========================
-# USER ADD / UPDATE (ANTI SPAM FIX)
-# =========================
-async def add_user(user_id, username, fullname):
-
-    now = time.time()
-    last = user_cache.get(user_id, 0)
-
-    if now - last < USER_COOLDOWN:
-        return False
-
-    user_cache[user_id] = now
-
-    async with db_pool.acquire() as conn:
-        await conn.execute(
-            """
-            INSERT INTO users(user_id, username, fullname)
-            VALUES($1,$2,$3)
-            ON CONFLICT(user_id)
-            DO UPDATE SET username=$2, fullname=$3
-            """,
-            user_id, username, fullname
-        )
-
 
 # =========================
 # WALLET INIT
