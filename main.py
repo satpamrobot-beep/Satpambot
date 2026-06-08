@@ -2425,6 +2425,12 @@ def help_kb():
                     text="ℹ️ Tentang",
                     callback_data="help_about"
                 )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🏠 Home",
+                    callback_data="home"
+                )
             ]
         ]
     )
