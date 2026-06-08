@@ -493,9 +493,8 @@ async def deposit_menu(call: CallbackQuery):
     await call.answer()
 
 
-# =========================
-# CREATE INVOICE
-# =========================
+import time
+import httpx
 
 async def create_bayargg_invoice(user_id: int, amount: int):
 
@@ -520,19 +519,21 @@ async def create_bayargg_invoice(user_id: int, amount: int):
     print("STATUS:", r.status_code)
     print("RESPONSE:", r.text)
 
-    data = r.json()
-
-    qr_url = (
-        data.get("qr_url")
-        or data.get("qr")
-        or data.get("qrcode")
-        or data.get("payment_url")
-    )
+    res = r.json()
+    data = res.get("data") or {}
 
     return {
-        "invoice_id": invoice_id,
-        "pay_url": data.get("payment_url"),
-        "qr_url": qr_url
+        # 🔥 fallback invoice biar aman
+        "invoice_id": data.get("invoice_id", invoice_id),
+
+        "payment_url": data.get("payment_url"),
+
+        # 🔥 QR FIX TOTAL
+        "qr_url": (
+            data.get("qris_static_image_url")
+            or data.get("qris_dynamic_image_url")
+            or data.get("payment_url")
+        )
     }
 # =========================
 # HANDLE NOMINAL
@@ -547,46 +548,33 @@ async def deposit_nominal(call: CallbackQuery):
     await call.answer("⏳ membuat invoice...")
 
     try:
+        # 🔥 INI YANG KAMU TARUH
         inv = await create_bayargg_invoice(user_id, amount)
 
+        print("INV DEBUG:", inv)
+
+        await call.message.edit_text(
+            f"💳 INVOICE CREATED\n\n"
+            f"💰 Amount: Rp {amount:,}\n"
+            f"🧾 Invoice: <code>{inv['invoice_id']}</code>\n\n"
+            "📌 Scan QR di bawah"
+        )
+
+        if inv.get("qr_url"):
+            await call.message.answer_photo(inv["qr_url"])
+        else:
+            await call.message.answer("❌ QR tidak tersedia dari API")
+
+        # simpan ke DB
         async with db_pool.acquire() as conn:
             await conn.execute("""
                 INSERT INTO deposits(invoice_id, user_id, amount, status)
                 VALUES($1,$2,$3,'pending')
             """, inv["invoice_id"], user_id, amount)
 
-        text = (
-            "💳 <b>INVOICE CREATED</b>\n\n"
-            f"💰 Amount: Rp {amount:,}\n"
-            f"🧾 Invoice: <code>{inv['invoice_id']}</code>\n\n"
-            "📌 Scan QR di bawah untuk pembayaran"
-        )
-
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🔄 Saya Sudah Bayar",
-                    callback_data=f"checkpay:{inv['invoice_id']}"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🔙 Back",
-                    callback_data="deposit"
-                )
-            ]
-        ])
-
-        await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
-
-        if inv.get("qr_url"):
-            await call.message.answer_photo(inv["qr_url"])
-
     except Exception as e:
         print("DEPOSIT ERROR:", repr(e))
         await call.message.edit_text("❌ Gagal membuat invoice")
-
-
 # =========================
 # CHECK PAYMENT
 # =========================
@@ -612,8 +600,10 @@ async def check_payment(call: CallbackQuery):
             f"💰 Rp {row['amount']:,} sudah masuk saldo",
             parse_mode="HTML"
         )
+    elif row["status"] == "pending":
+        await call.answer("⏳ Masih pending", show_alert=True)
     else:
-        await call.answer("⏳ Belum dibayar / masih pending", show_alert=True)
+        await call.answer(f"⚠️ Status: {row['status']}", show_alert=True)
         
 # =========================
 # UP FILE INIT
