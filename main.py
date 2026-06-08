@@ -1640,98 +1640,267 @@ async def broadcast_cmd(message: Message):
     )
 
 # =========================
-# HELP TEXT
+# HELP MENU SYSTEM
 # =========================
-HELP_TEXT = """
-<b>🔥 TZY FILE BOT — HELP MENU 🔥</b>
 
-Selamat datang di <b>TZY FILE BOT</b>
-Bot untuk upload & ambil file pakai <code>CODE</code>
+from datetime import datetime
 
-━━━━━━━━━━━━━━
-📤 <b>UPLOAD FILE</b>
-━━━━━━━━━━━━━━
-1. Tekan <b>📤 Up File</b>
-2. Kirim media
-3. Tekan <b>✅ DONE</b>
-4. Bot kasih CODE
-
-⚠️ Jangan lupa DONE!
-
-━━━━━━━━━━━━━━
-📥 <b>GET FILE</b>
-━━━━━━━━━━━━━━
-1. Tekan <b>📥 Get File</b>
-2. Kirim CODE
-3. File dikirim otomatis
-
-❌ Kalau error:
-• CODE salah
-• Tidak ditemukan
-
-━━━━━━━━━━━━━━
-👤 <b>ACCOUNT</b>
-━━━━━━━━━━━━━━
-• ID
-• Nama
-• Username
-
-━━━━━━━━━━━━━━
-💎 <b>VIP</b>
-━━━━━━━━━━━━━━
-⚡ Unlimited Upload  
-⚡ Faster Access  
-⚡ Priority System  
-
-━━━━━━━━━━━━━━
-🛠 <b>ADMIN</b>
-━━━━━━━━━━━━━━
-<code>/stat</code> → statistik  
-<code>/broadcast</code> → kirim ke semua user  
-<code>/addadmin</code> → tambah admin  
-
-━━━━━━━━━━━━━━
-⚠ <b>RULE</b>
-━━━━━━━━━━━━━━
-❌ Spam  
-❌ Abuse  
-❌ Flood  
-
-━━━━━━━━━━━━━━
-💀 <b>NOTE</b>
-━━━━━━━━━━━━━━
-• Bot bukan cenayang 😏  
-• Salah input = salah sendiri  
-• Simpan CODE baik-baik  
-
-━━━━━━━━━━━━━━
-🚀 <b>READY</b>
-━━━━━━━━━━━━━━
-"""
+HELP_TEXT = (
+    "🔥 <b>DECODEFILE BOT</b>\n\n"
+    "Selamat datang di pusat bantuan.\n\n"
+    "Pilih menu yang ingin kamu lihat di bawah."
+)
 
 # =========================
-# HELP HANDLER
+# KEYBOARD
 # =========================
+
+def help_kb():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💸 Withdraw",
+                    callback_data="help_withdraw"
+                ),
+                InlineKeyboardButton(
+                    text="🏦 Set Bank",
+                    callback_data="help_bank"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📊 Status WD",
+                    callback_data="help_status"
+                ),
+                InlineKeyboardButton(
+                    text="🔒 Privasi",
+                    callback_data="help_privacy"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🤖 Status Bot",
+                    callback_data="help_bot"
+                ),
+                InlineKeyboardButton(
+                    text="ℹ️ Tentang",
+                    callback_data="help_about"
+                )
+            ]
+        ]
+    )
+
+
+def back_help_kb():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🔙 Kembali",
+                    callback_data="back_help"
+                )
+            ]
+        ]
+    )
+
+# =========================
+# HELP COMMAND
+# =========================
+
 @router.message(F.text == "/help")
 async def help_cmd(message: Message):
 
-    await asyncio.sleep(0.2)
-
     await message.answer(
         HELP_TEXT,
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=help_kb()
     )
 
 
 @router.message(F.text == "❓ Help")
 async def help_button(message: Message):
 
-    await asyncio.sleep(0.2)
-
     await message.answer(
         HELP_TEXT,
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=help_kb()
     )
+
+# =========================
+# WITHDRAW
+# =========================
+
+@router.callback_query(F.data == "help_withdraw")
+async def help_withdraw(call: CallbackQuery):
+
+    await call.message.edit_text(
+        "💸 <b>WITHDRAW SYSTEM</b>\n\n"
+        "━━━━━━━━━━━━━━\n"
+        "📌 INFORMASI\n"
+        "━━━━━━━━━━━━━━\n"
+        "• Withdraw dilakukan melalui sistem.\n"
+        "• Request akan masuk ke admin.\n"
+        "• Status: Pending → Process → Success.\n"
+        "• Pastikan data rekening benar.\n\n"
+        "━━━━━━━━━━━━━━\n"
+        "⚠️ PENTING\n"
+        "━━━━━━━━━━━━━━\n"
+        "Kesalahan nama rekening,\n"
+        "nomor rekening atau e-wallet\n"
+        "menjadi tanggung jawab pengguna.",
+        parse_mode="HTML",
+        reply_markup=back_help_kb()
+    )
+
+    await call.answer()
+
+# =========================
+# BANK
+# =========================
+
+@router.callback_query(F.data == "help_bank")
+async def help_bank(call: CallbackQuery):
+
+    await call.message.edit_text(
+        "🏦 <b>SET BANK / EWALLET</b>\n\n"
+        "━━━━━━━━━━━━━━\n"
+        "📌 DATA YANG DISIMPAN\n"
+        "━━━━━━━━━━━━━━\n"
+        "• Nama Pemilik\n"
+        "• Nama Bank / Ewallet\n"
+        "• Nomor Rekening\n\n"
+        "━━━━━━━━━━━━━━\n"
+        "⚠️ PERINGATAN\n"
+        "━━━━━━━━━━━━━━\n"
+        "Periksa kembali data sebelum menyimpan.\n"
+        "Kesalahan transfer akibat data salah\n"
+        "bukan tanggung jawab admin.",
+        parse_mode="HTML",
+        reply_markup=back_help_kb()
+    )
+
+    await call.answer()
+
+# =========================
+# STATUS WD
+# =========================
+
+@router.callback_query(F.data == "help_status")
+async def help_status(call: CallbackQuery):
+
+    await call.message.edit_text(
+        "📊 <b>STATUS WITHDRAW</b>\n\n"
+        "🟡 Pending\n"
+        "Menunggu pengecekan admin.\n\n"
+        "🔵 Process\n"
+        "Sedang diproses.\n\n"
+        "🟢 Success\n"
+        "Dana berhasil dikirim.\n\n"
+        "🔴 Rejected\n"
+        "Request ditolak.\n\n"
+        "Status dapat berubah sewaktu-waktu "
+        "sesuai proses admin.",
+        parse_mode="HTML",
+        reply_markup=back_help_kb()
+    )
+
+    await call.answer()
+
+# =========================
+# PRIVACY
+# =========================
+
+@router.callback_query(F.data == "help_privacy")
+async def help_privacy(call: CallbackQuery):
+
+    await call.message.edit_text(
+        "🔒 <b>PRIVASI & KEAMANAN</b>\n\n"
+        "━━━━━━━━━━━━━━\n"
+        "📌 DATA USER\n"
+        "━━━━━━━━━━━━━━\n"
+        "• User ID\n"
+        "• Username\n"
+        "• Nama pengguna\n"
+        "• Data rekening yang disimpan user\n\n"
+        "━━━━━━━━━━━━━━\n"
+        "🛡 KEAMANAN\n"
+        "━━━━━━━━━━━━━━\n"
+        "• File hanya dapat diakses menggunakan CODE.\n"
+        "• Data tidak dibagikan ke pihak ketiga.\n"
+        "• Pengguna wajib menjaga CODE miliknya.\n"
+        "• Jangan bagikan data pribadi kepada orang lain.",
+        parse_mode="HTML",
+        reply_markup=back_help_kb()
+    )
+
+    await call.answer()
+
+# =========================
+# BOT STATUS
+# =========================
+
+@router.callback_query(F.data == "help_bot")
+async def help_bot(call: CallbackQuery):
+
+    year = datetime.now().year
+
+    await call.message.edit_text(
+        "🤖 <b>BOT STATUS</b>\n\n"
+        "🟢 Status : Online\n"
+        "⚡ Sistem : Aktif\n"
+        "🔖 Version : v2.0\n"
+        "📦 Storage : Online\n"
+        "🔒 Security : Active\n\n"
+        f"© {year} DecodeFile Bot",
+        parse_mode="HTML",
+        reply_markup=back_help_kb()
+    )
+
+    await call.answer()
+
+# =========================
+# ABOUT
+# =========================
+
+@router.callback_query(F.data == "help_about")
+async def help_about(call: CallbackQuery):
+
+    await call.message.edit_text(
+        "ℹ️ <b>TENTANG BOT</b>\n\n"
+        "DecodeFile Bot adalah sistem penyimpanan "
+        "dan pengambilan file berbasis CODE.\n\n"
+        "━━━━━━━━━━━━━━\n"
+        "FITUR\n"
+        "━━━━━━━━━━━━━━\n"
+        "📤 Upload File\n"
+        "📥 Get File\n"
+        "🏦 Set Bank / Ewallet\n"
+        "💸 Withdraw System\n"
+        "📊 Status Withdraw\n"
+        "🔒 Privacy & Security\n\n"
+        "Bot dirancang untuk memudahkan "
+        "pengelolaan file dan transaksi pengguna.",
+        parse_mode="HTML",
+        reply_markup=back_help_kb()
+    )
+
+    await call.answer()
+
+# =========================
+# BACK
+# =========================
+
+@router.callback_query(F.data == "back_help")
+async def back_help(call: CallbackQuery):
+
+    await call.message.edit_text(
+        HELP_TEXT,
+        parse_mode="HTML",
+        reply_markup=help_kb()
+    )
+
+    await call.answer()
 
 # =========================
 # CLEANUP MEMORY
