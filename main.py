@@ -678,27 +678,56 @@ async def check_payment(call: CallbackQuery):
         await call.answer("⏳ Belum dibayar", show_alert=True)
 
 # =========================
-# WITHDRAW SYSTEM FULL FIX
+# WITHDRAW SYSTEM FULL FINAL
 # =========================
 
 import time
 from datetime import datetime
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-MIN_WITHDRAW = 50000
-MAX_WITHDRAW = 500000
+# =========================
+# STATE
+# =========================
 
 user_state = {}
 
 # =========================
-# OPEN / CLOSE TIME
+# LIMIT CONFIG
+# =========================
+
+MIN_WITHDRAW = 50000
+MAX_WITHDRAW = 500000
+
+# =========================
+# BANK / EWALLET / CRYPTO LIST
+# =========================
+
+BANKS = [
+    "BCA", "BRI", "BNI", "Mandiri",
+    "Permata", "CIMB Niaga", "Danamon",
+    "BSI", "Bank Mega",
+    "Maybank Indonesia", "Public Bank MY", "CIMB Bank MY"
+]
+
+EWALLETS = [
+    "DANA", "OVO", "GoPay", "ShopeePay",
+    "LinkAja", "Jenius Pay",
+    "TouchNGo MY", "GrabPay MY"
+]
+
+CRYPTO = [
+    "Binance", "Tokocrypto", "Bitget", "Bybit", "OKX", "PayPal"
+]
+
+# =========================
+# AUTO OPEN / CLOSE SYSTEM
 # =========================
 
 def is_withdraw_open():
     now = datetime.now()
     weekday = now.weekday()
 
-    # Senin & Jumat 09-20
+    # Senin & Jumat 09 - 20
     if weekday in [0, 4]:
         return 9 <= now.hour < 20
 
@@ -706,19 +735,7 @@ def is_withdraw_open():
 
 
 # =========================
-# KEYBOARD
-# =========================
-
-def withdraw_menu_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💸 Withdraw", callback_data="wd_request")],
-        [InlineKeyboardButton(text="⚙️ Atur Bank / Ewallet", callback_data="wd_settings")],
-        [InlineKeyboardButton(text="🔙 Kembali", callback_data="back_main")]
-    ])
-
-
-# =========================
-# PAGE WITHDRAW
+# MAIN PAGE WITHDRAW
 # =========================
 
 @router.callback_query(F.data == "withdraw")
@@ -729,106 +746,186 @@ async def withdraw_page(call: CallbackQuery):
     try:
         async with db_pool.acquire() as conn:
 
-            # auto create user kalau belum ada
+            # auto create user jika belum ada
             await conn.execute("""
                 INSERT INTO users (user_id, balance)
                 VALUES ($1, 0)
                 ON CONFLICT (user_id) DO NOTHING
             """, user_id)
 
-            balance = await conn.fetchval("""
-                SELECT balance FROM users WHERE user_id=$1
-            """, user_id) or 0
+            row = await conn.fetchrow("""
+                SELECT balance, wd_method, wd_provider, wd_name, wd_number
+                FROM users WHERE user_id=$1
+            """, user_id)
 
-        status_text = "🟢 OPEN" if is_withdraw_open() else "🔴 CLOSED"
+        balance = row["balance"] or 0
+        status = "🟢 OPEN" if is_withdraw_open() else "🔴 CLOSED"
+
+        method = row["wd_method"] or "BELUM SET"
+        provider = row["wd_provider"] or "-"
+        name = row["wd_name"] or "-"
+        number = row["wd_number"] or "-"
 
         text = (
-            "💸 <b>WITHDRAW SYSTEM</b>\n\n"
-            f"💰 Saldo: <b>Rp {balance:,}</b>\n"
-            f"⏰ Status: <b>{status_text}</b>\n\n"
-            f"📌 Minimal: Rp {MIN_WITHDRAW:,}\n"
-            f"📌 Maksimal: Rp {MAX_WITHDRAW:,}\n\n"
-            "🕘 Senin & Jumat: 09:00 - 20:00\n"
-            "❌ Sabtu & Minggu: TUTUP\n\n"
-            "⚠️ Pastikan data bank benar sebelum withdraw"
+            "💸 <b>WITHDRAW CENTER</b>\n\n"
+            f"💰 Saldo Anda: <b>Rp {balance:,}</b>\n"
+            f"⏰ Status Sistem: <b>{status}</b>\n\n"
+            "━━━━━━━━━━━━━━\n"
+            "🏦 <b>DATA WITHDRAW</b>\n"
+            f"• Method   : {method}\n"
+            f"• Provider : {provider}\n"
+            f"• Nama     : {name}\n"
+            f"• Nomor    : {number}\n"
+            "━━━━━━━━━━━━━━\n\n"
+            f"📌 Minimal Withdraw: Rp {MIN_WITHDRAW:,}\n"
+            f"📌 Maksimal Withdraw: Rp {MAX_WITHDRAW:,}\n\n"
+            "🕘 Jadwal:\n"
+            "• Senin & Jumat: 09:00 - 20:00\n"
+            "• Sabtu & Minggu: TUTUP"
         )
 
-        await call.message.edit_text(
-            text,
-            parse_mode="HTML",
-            reply_markup=withdraw_menu_kb()
-        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💸 REQUEST WITHDRAW", callback_data="wd_request")],
+            [InlineKeyboardButton(text="⚙️ ATUR BANK / EWALLET", callback_data="wd_settings")],
+            [InlineKeyboardButton(text="🔙 KEMBALI", callback_data="back_main")]
+        ])
+
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
 
     except Exception as e:
-        print("WITHDRAW PAGE ERROR:", repr(e))
+        print("WITHDRAW ERROR:", repr(e))
         await call.message.edit_text("❌ Gagal load withdraw")
 
 
 # =========================
-# SET BANK / EWALLET
+# STEP 1 - PILIH JENIS
 # =========================
 
 @router.callback_query(F.data == "wd_settings")
 async def wd_settings(call: CallbackQuery):
 
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🏦 BANK", callback_data="wd_type:bank"),
+            InlineKeyboardButton(text="📱 EWALLET", callback_data="wd_type:ewallet"),
+        ],
+        [
+            InlineKeyboardButton(text="₿ CRYPTO", callback_data="wd_type:crypto")
+        ],
+        [
+            InlineKeyboardButton(text="🔙 BACK", callback_data="withdraw")
+        ]
+    ])
+
     await call.message.edit_text(
-        "⚙️ <b>ATUR BANK / EWALLET</b>\n\n"
-        "Format wajib:\n"
-        "<code>Jenis | Nama | Nomor</code>\n\n"
-        "Contoh:\n"
-        "<code>DANA | Budi | 08123456789</code>\n\n"
-        "⚠️ Kesalahan data = bukan tanggung jawab admin",
+        "⚙️ <b>PILIH JENIS WITHDRAW</b>\n\n"
+        "Silakan pilih metode penarikan:",
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✍️ Isi Data", callback_data="wd_set_start")],
-            [InlineKeyboardButton(text="🔙 Back", callback_data="withdraw")]
-        ])
+        reply_markup=kb
     )
 
 
-@router.callback_query(F.data == "wd_set_start")
-async def wd_set_start(call: CallbackQuery):
+# =========================
+# STEP 2 - PILIH PROVIDER
+# =========================
 
-    user_state[call.from_user.id] = {"mode": "set_wd"}
+@router.callback_query(F.data.startswith("wd_type:"))
+async def wd_type(call: CallbackQuery):
+
+    t = call.data.split(":")[1]
+    user_state[call.from_user.id] = {"type": t}
+
+    if t == "bank":
+        options = BANKS
+        title = "🏦 PILIH BANK"
+    elif t == "ewallet":
+        options = EWALLETS
+        title = "📱 PILIH EWALLET"
+    else:
+        options = CRYPTO
+        title = "₿ PILIH CRYPTO WALLET"
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=o, callback_data=f"wd_provider:{o}")]
+            for o in options
+        ] + [[InlineKeyboardButton(text="🔙 BACK", callback_data="wd_settings")]]
+    )
+
+    await call.message.edit_text(title, parse_mode="HTML", reply_markup=kb)
+
+
+# =========================
+# STEP 3 - INPUT DATA
+# =========================
+
+@router.callback_query(F.data.startswith("wd_provider:"))
+async def wd_provider(call: CallbackQuery):
+
+    provider = call.data.split(":")[1]
+
+    user_state[call.from_user.id]["provider"] = provider
+    user_state[call.from_user.id]["mode"] = "wd_input"
 
     await call.message.edit_text(
-        "✍️ Kirim data sekarang:\n\n"
-        "<code>Jenis | Nama | Nomor</code>",
+        "✍️ <b>MASUKKAN DATA WITHDRAW</b>\n\n"
+        "Format WAJIB:\n"
+        "<code>Nama Lengkap | Nomor Rekening / Wallet</code>\n\n"
+        "⚠️ Pastikan data benar, salah input bukan tanggung jawab sistem",
         parse_mode="HTML"
     )
 
 
 # =========================
-# HANDLE INPUT BANK
+# STEP 4 - HANDLE INPUT
 # =========================
 
 @router.message()
-async def handle_wd_input(message: Message):
+async def wd_input(message: Message):
 
     user_id = message.from_user.id
     state = user_state.get(user_id)
 
-    if not state or state.get("mode") != "set_wd":
+    if not state or state.get("mode") != "wd_input":
         return
 
     try:
-        jenis, nama, nomor = [x.strip() for x in message.text.split("|")]
+        text = message.text.strip().replace("\n", " ")
+        parts = [x.strip() for x in text.split("|")]
+
+        if len(parts) != 2:
+            return await message.answer(
+                "❌ Format salah\n\n"
+                "Gunakan format:\n"
+                "<code>Nama | Nomor</code>",
+                parse_mode="HTML"
+            )
+
+        nama, nomor = parts
 
         async with db_pool.acquire() as conn:
             await conn.execute("""
                 UPDATE users
                 SET wd_method=$1,
-                    wd_name=$2,
-                    wd_number=$3
-                WHERE user_id=$4
-            """, jenis, nama, nomor, user_id)
+                    wd_provider=$2,
+                    wd_name=$3,
+                    wd_number=$4
+                WHERE user_id=$5
+            """,
+            state["type"],
+            state["provider"],
+            nama,
+            nomor,
+            user_id
+            )
 
         user_state.pop(user_id, None)
 
-        await message.answer("✅ Data bank berhasil disimpan")
+        await message.answer("✅ Data withdraw berhasil disimpan")
 
-    except Exception:
-        await message.answer("❌ Format salah\nContoh: DANA | Budi | 0812xxx")
+    except Exception as e:
+        print("WD INPUT ERROR:", repr(e))
+        await message.answer("❌ Gagal simpan data")
 
 
 # =========================
@@ -846,7 +943,7 @@ async def wd_request(call: CallbackQuery):
     async with db_pool.acquire() as conn:
 
         row = await conn.fetchrow("""
-            SELECT balance, wd_method, wd_name, wd_number
+            SELECT balance, wd_method, wd_provider, wd_name, wd_number
             FROM users
             WHERE user_id=$1
         """, user_id)
@@ -855,26 +952,28 @@ async def wd_request(call: CallbackQuery):
         return await call.answer("❌ User tidak ditemukan", show_alert=True)
 
     if not row["wd_method"]:
-        return await call.answer("⚠️ Atur bank dulu", show_alert=True)
+        return await call.answer("⚠️ Silakan atur rekening dulu", show_alert=True)
 
     if row["balance"] < MIN_WITHDRAW:
         return await call.answer("❌ Saldo kurang", show_alert=True)
 
     await call.message.edit_text(
-        "💸 <b>WITHDRAW READY</b>\n\n"
+        "💸 <b>WITHDRAW CONFIRMATION</b>\n\n"
         f"💰 Saldo: Rp {row['balance']:,}\n"
-        f"🏦 {row['wd_method']} - {row['wd_name']}\n\n"
-        "Klik tombol untuk proses withdraw",
+        f"🏦 {row['wd_method']} ({row['wd_provider']})\n"
+        f"👤 {row['wd_name']}\n"
+        f"📌 {row['wd_number']}\n\n"
+        "⚠️ Setelah lanjut, saldo akan diproses",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💸 PROSES WITHDRAW", callback_data="wd_confirm")],
-            [InlineKeyboardButton(text="🔙 Back", callback_data="withdraw")]
+            [InlineKeyboardButton(text="🚀 PROSES WITHDRAW", callback_data="wd_confirm")],
+            [InlineKeyboardButton(text="🔙 BACK", callback_data="withdraw")]
         ])
     )
 
 
 # =========================
-# CONFIRM WITHDRAW
+# EXECUTE WITHDRAW
 # =========================
 
 @router.callback_query(F.data == "wd_confirm")
@@ -885,7 +984,7 @@ async def wd_confirm(call: CallbackQuery):
     async with db_pool.acquire() as conn:
 
         row = await conn.fetchrow("""
-            SELECT balance, wd_method, wd_name, wd_number
+            SELECT balance, wd_method, wd_provider, wd_name, wd_number
             FROM users
             WHERE user_id=$1
         """, user_id)
@@ -901,15 +1000,16 @@ async def wd_confirm(call: CallbackQuery):
 
         await conn.execute("""
             INSERT INTO withdraws(
-                user_id, amount, method,
+                user_id, amount, method, provider,
                 account_name, account_number,
                 status, external_id
             )
-            VALUES($1,$2,$3,$4,$5,'pending',$6)
+            VALUES($1,$2,$3,$4,$5,$6,'pending',$7)
         """,
         user_id,
         amount,
         row["wd_method"],
+        row["wd_provider"],
         row["wd_name"],
         row["wd_number"],
         external_id
@@ -921,7 +1021,8 @@ async def wd_confirm(call: CallbackQuery):
 
     await call.message.edit_text(
         "⏳ <b>WITHDRAW PENDING</b>\n\n"
-        "📌 Akan diproses manual oleh admin",
+        "📌 Dana akan diproses manual oleh admin\n"
+        "⏰ Estimasi 1-24 jam",
         parse_mode="HTML"
     )
         
