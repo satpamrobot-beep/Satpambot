@@ -10,7 +10,9 @@ import asyncpg
 import time
 import asyncio
 import random
+import hashlib
 
+from fastapi import FastAPI, Request, HTTPException
 from collections import defaultdict
 from dotenv import load_dotenv
 from aiogram.filters import CommandStart
@@ -179,11 +181,6 @@ async def safe_send(func, *args, **kwargs):
 # =========================
 # FASTAPI INIT (WAJIB DI ATAS)
 # =========================
-
-from fastapi import FastAPI, Request, HTTPException
-import hashlib
-
-app = FastAPI()
 
 DB_POOL = None  # dipakai bersama bot
 
