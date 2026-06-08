@@ -2391,6 +2391,16 @@ async def help_button(message: Message):
         parse_mode="HTML",
         reply_markup=help_kb()
     )
+@router.callback_query(F.data == "help")
+async def help_callback(call: CallbackQuery):
+
+    await call.message.edit_text(
+        HELP_TEXT,
+        parse_mode="HTML",
+        reply_markup=help_kb()
+    )
+
+    await call.answer()
 
 # =========================
 # WITHDRAW
