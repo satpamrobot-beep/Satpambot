@@ -678,7 +678,7 @@ async def check_payment(call: CallbackQuery):
         await call.answer("⏳ Belum dibayar", show_alert=True)
 
 # =========================
-# WITHDRAW SYSTEM FULL (FIXED)
+# WITHDRAW SYSTEM FULL FIX
 # =========================
 
 import time
@@ -691,17 +691,16 @@ MAX_WITHDRAW = 500000
 user_state = {}
 
 # =========================
-# JAM WITHDRAW (AUTO OPEN/CLOSE)
+# OPEN / CLOSE TIME
 # =========================
 
 def is_withdraw_open():
     now = datetime.now()
-    weekday = now.weekday()  # 0=Mon ... 6=Sun
-    hour = now.hour
+    weekday = now.weekday()
 
-    # Senin & Jumat 09:00 - 20:00
+    # Senin & Jumat 09-20
     if weekday in [0, 4]:
-        return 9 <= hour < 20
+        return 9 <= now.hour < 20
 
     return False
 
@@ -730,28 +729,28 @@ async def withdraw_page(call: CallbackQuery):
     try:
         async with db_pool.acquire() as conn:
 
-            # auto create user
+            # auto create user kalau belum ada
             await conn.execute("""
-                INSERT INTO users (id, balance)
+                INSERT INTO users (user_id, balance)
                 VALUES ($1, 0)
-                ON CONFLICT (id) DO NOTHING
+                ON CONFLICT (user_id) DO NOTHING
             """, user_id)
 
-            balance = await conn.fetchval(
-                "SELECT balance FROM users WHERE id=$1",
-                user_id
-            ) or 0
+            balance = await conn.fetchval("""
+                SELECT balance FROM users WHERE user_id=$1
+            """, user_id) or 0
 
         status_text = "🟢 OPEN" if is_withdraw_open() else "🔴 CLOSED"
 
         text = (
-            "💸 <b>WITHDRAW</b>\n\n"
-            f"💰 Saldo: Rp {balance:,}\n"
-            f"⏰ Status: {status_text}\n\n"
+            "💸 <b>WITHDRAW SYSTEM</b>\n\n"
+            f"💰 Saldo: <b>Rp {balance:,}</b>\n"
+            f"⏰ Status: <b>{status_text}</b>\n\n"
             f"📌 Minimal: Rp {MIN_WITHDRAW:,}\n"
             f"📌 Maksimal: Rp {MAX_WITHDRAW:,}\n\n"
             "🕘 Senin & Jumat: 09:00 - 20:00\n"
-            "❌ Sabtu & Minggu: TUTUP"
+            "❌ Sabtu & Minggu: TUTUP\n\n"
+            "⚠️ Pastikan data bank benar sebelum withdraw"
         )
 
         await call.message.edit_text(
@@ -773,12 +772,12 @@ async def withdraw_page(call: CallbackQuery):
 async def wd_settings(call: CallbackQuery):
 
     await call.message.edit_text(
-        "⚙️ <b>SET BANK / EWALLET</b>\n\n"
-        "Format:\n"
+        "⚙️ <b>ATUR BANK / EWALLET</b>\n\n"
+        "Format wajib:\n"
         "<code>Jenis | Nama | Nomor</code>\n\n"
         "Contoh:\n"
         "<code>DANA | Budi | 08123456789</code>\n\n"
-        "⚠️ Salah input bukan tanggung jawab admin",
+        "⚠️ Kesalahan data = bukan tanggung jawab admin",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✍️ Isi Data", callback_data="wd_set_start")],
@@ -793,14 +792,14 @@ async def wd_set_start(call: CallbackQuery):
     user_state[call.from_user.id] = {"mode": "set_wd"}
 
     await call.message.edit_text(
-        "✍️ Kirim data:\n\n"
+        "✍️ Kirim data sekarang:\n\n"
         "<code>Jenis | Nama | Nomor</code>",
         parse_mode="HTML"
     )
 
 
 # =========================
-# HANDLE INPUT
+# HANDLE INPUT BANK
 # =========================
 
 @router.message()
@@ -813,12 +812,7 @@ async def handle_wd_input(message: Message):
         return
 
     try:
-        parts = [x.strip() for x in message.text.split("|")]
-
-        if len(parts) != 3:
-            return await message.answer("❌ Format salah")
-
-        jenis, nama, nomor = parts
+        jenis, nama, nomor = [x.strip() for x in message.text.split("|")]
 
         async with db_pool.acquire() as conn:
             await conn.execute("""
@@ -826,16 +820,15 @@ async def handle_wd_input(message: Message):
                 SET wd_method=$1,
                     wd_name=$2,
                     wd_number=$3
-                WHERE id=$4
+                WHERE user_id=$4
             """, jenis, nama, nomor, user_id)
 
         user_state.pop(user_id, None)
 
-        await message.answer("✅ Data withdraw tersimpan")
+        await message.answer("✅ Data bank berhasil disimpan")
 
-    except Exception as e:
-        print("WD INPUT ERROR:", repr(e))
-        await message.answer("❌ Error input data")
+    except Exception:
+        await message.answer("❌ Format salah\nContoh: DANA | Budi | 0812xxx")
 
 
 # =========================
@@ -848,29 +841,30 @@ async def wd_request(call: CallbackQuery):
     user_id = call.from_user.id
 
     if not is_withdraw_open():
-        return await call.answer("🔴 Withdraw TUTUP", show_alert=True)
+        return await call.answer("🔴 Withdraw sedang TUTUP", show_alert=True)
 
     async with db_pool.acquire() as conn:
 
         row = await conn.fetchrow("""
             SELECT balance, wd_method, wd_name, wd_number
             FROM users
-            WHERE id=$1
+            WHERE user_id=$1
         """, user_id)
 
-        if not row:
-            return await call.answer("❌ User tidak ditemukan", show_alert=True)
+    if not row:
+        return await call.answer("❌ User tidak ditemukan", show_alert=True)
 
-        if not row["wd_method"]:
-            return await call.answer("⚠️ Atur bank dulu", show_alert=True)
+    if not row["wd_method"]:
+        return await call.answer("⚠️ Atur bank dulu", show_alert=True)
 
-        if row["balance"] < MIN_WITHDRAW:
-            return await call.answer("❌ Saldo kurang", show_alert=True)
+    if row["balance"] < MIN_WITHDRAW:
+        return await call.answer("❌ Saldo kurang", show_alert=True)
 
     await call.message.edit_text(
-        "💸 <b>READY WITHDRAW</b>\n\n"
-        f"💰 Saldo: Rp {row['balance']:,}\n\n"
-        "Klik untuk lanjut proses",
+        "💸 <b>WITHDRAW READY</b>\n\n"
+        f"💰 Saldo: Rp {row['balance']:,}\n"
+        f"🏦 {row['wd_method']} - {row['wd_name']}\n\n"
+        "Klik tombol untuk proses withdraw",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💸 PROSES WITHDRAW", callback_data="wd_confirm")],
@@ -893,7 +887,7 @@ async def wd_confirm(call: CallbackQuery):
         row = await conn.fetchrow("""
             SELECT balance, wd_method, wd_name, wd_number
             FROM users
-            WHERE id=$1
+            WHERE user_id=$1
         """, user_id)
 
         if not row:
@@ -902,33 +896,32 @@ async def wd_confirm(call: CallbackQuery):
         if row["balance"] < MIN_WITHDRAW:
             return await call.answer("❌ Saldo kurang", show_alert=True)
 
-        external_id = f"WD-{user_id}-{int(time.time())}"
-
         amount = row["balance"]
+        external_id = f"WD-{user_id}-{int(time.time())}"
 
         await conn.execute("""
             INSERT INTO withdraws(
-                external_id, user_id, amount,
-                method, account_name, account_number,
-                status
+                user_id, amount, method,
+                account_name, account_number,
+                status, external_id
             )
-            VALUES($1,$2,$3,$4,$5,$6,'pending')
+            VALUES($1,$2,$3,$4,$5,'pending',$6)
         """,
-        external_id,
         user_id,
         amount,
         row["wd_method"],
         row["wd_name"],
-        row["wd_number"]
+        row["wd_number"],
+        external_id
         )
 
         await conn.execute("""
-            UPDATE users SET balance=0 WHERE id=$1
+            UPDATE users SET balance=0 WHERE user_id=$1
         """, user_id)
 
     await call.message.edit_text(
         "⏳ <b>WITHDRAW PENDING</b>\n\n"
-        "📌 Menunggu diproses admin",
+        "📌 Akan diproses manual oleh admin",
         parse_mode="HTML"
     )
         
