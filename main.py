@@ -11,6 +11,8 @@ import time
 import asyncio
 import random
 import hashlib
+import hmac
+import uvicorn
 
 from fastapi import FastAPI, Request, HTTPException
 from collections import defaultdict
@@ -56,52 +58,57 @@ FORCE_CHANNEL_LINK = os.getenv(
 UPDATE_CHANNEL = os.getenv("UPDATE_CHANNEL")
 NOTIFICATION_CHANNEL = int(os.getenv("NOTIFICATION_CHANNEL"))
 VIP_LINK = os.getenv("VIP_LINK")
+BAYARGG_API_URL = "https://api.bayargg.com/v1/invoice/create"  # contoh
+BAYARGG_API_KEY = os.getenv("BAYARGG_API_KEY")
 
-# =========================
-# DB POOL (OPTIMIZED)
-# =========================
-
-db_pool: asyncpg.Pool | None = None
-
+# ====================
+# DB POOL
+# ====================
 async def init_db():
     global db_pool
+    db_pool = None
 
     db_pool = await asyncpg.create_pool(
         DATABASE_URL,
-
-        # =========================
-        # POOL SETTINGS
-        # =========================
         min_size=2,
         max_size=5,
-
-        # =========================
-        # PGBOUNCER FIX (WAJIB)
-        # =========================
         statement_cache_size=0,
-
-        # =========================
-        # TIMEOUT
-        # =========================
         command_timeout=15
     )
 
     async with db_pool.acquire() as conn:
         await conn.execute("""
+        -- =========================
+        -- USERS TABLE (WALLET CORE)
+        -- =========================
         CREATE TABLE IF NOT EXISTS users(
             user_id BIGINT PRIMARY KEY,
             username TEXT,
-            fullname TEXT
+            fullname TEXT,
+            balance BIGINT DEFAULT 0,
+            total_deposit BIGINT DEFAULT 0,
+            total_withdraw BIGINT DEFAULT 0,
+            created_at TIMESTAMP DEFAULT NOW()
         );
 
+        -- =========================
+        -- CODES TABLE (FILE SYSTEM)
+        -- =========================
         CREATE TABLE IF NOT EXISTS codes(
             id SERIAL PRIMARY KEY,
             code TEXT UNIQUE,
             owner_id BIGINT,
             total_media INT,
-            total_size BIGINT
+            total_size BIGINT,
+            created_at TIMESTAMP DEFAULT NOW()
         );
 
+        CREATE INDEX IF NOT EXISTS idx_codes_owner
+        ON codes(owner_id);
+
+        -- =========================
+        -- MEDIAS TABLE
+        -- =========================
         CREATE TABLE IF NOT EXISTS medias(
             id SERIAL PRIMARY KEY,
             code TEXT,
@@ -109,6 +116,64 @@ async def init_db():
             file_type TEXT,
             file_size BIGINT
         );
+
+        CREATE INDEX IF NOT EXISTS idx_medias_code
+        ON medias(code);
+
+        -- =========================
+        -- DEPOSITS TABLE (PAYMENT IN)
+        -- =========================
+        CREATE TABLE IF NOT EXISTS deposits(
+            id SERIAL PRIMARY KEY,
+            invoice_id TEXT UNIQUE,
+            user_id BIGINT,
+            amount BIGINT,
+            status TEXT DEFAULT 'pending', 
+            created_at TIMESTAMP DEFAULT NOW(),
+            paid_at TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_deposits_user
+        ON deposits(user_id);
+
+        CREATE INDEX IF NOT EXISTS idx_deposits_invoice
+        ON deposits(invoice_id);
+
+        -- =========================
+        -- WITHDRAW TABLE (PAYMENT OUT)
+        -- =========================
+        CREATE TABLE IF NOT EXISTS withdraws(
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
+            amount BIGINT,
+            fee BIGINT DEFAULT 0,
+            net_amount BIGINT,
+            method TEXT, -- bank / dana / ovo / dll
+            account_name TEXT,
+            account_number TEXT,
+            status TEXT DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT NOW(),
+            processed_at TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_withdraw_user
+        ON withdraws(user_id);
+
+        -- =========================
+        -- USER BANK / EWALLET
+        -- =========================
+        CREATE TABLE IF NOT EXISTS user_payment_methods(
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
+            method TEXT, -- bank / dana / ovo / gopay
+            account_name TEXT,
+            account_number TEXT,
+            is_default BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_payment_user
+        ON user_payment_methods(user_id);
         """)
 # =========================
 # CACHE / MEMORY
@@ -182,15 +247,18 @@ async def safe_send(func, *args, **kwargs):
 # FASTAPI INIT (WAJIB DI ATAS)
 # =========================
 
-DB_POOL = None  # dipakai bersama bot
-
 BAYARGG_SECRET = os.getenv("BAYARGG_SECRET", "SECRET_KAMU")
 
 def verify_signature(data: dict, signature: str):
-    raw = f"{data['invoice_id']}:{data['amount']}:{BAYARGG_SECRET}"
-    calc = hashlib.sha256(raw.encode()).hexdigest()
-    return calc == signature
+    required_fields = ["invoice_id", "amount", "status"]
 
+    if not all(k in data for k in required_fields):
+        return False
+
+    raw = f"{data['invoice_id']}:{data['amount']}:{data['status']}:{BAYARGG_SECRET}"
+    expected = hashlib.sha256(raw.encode()).hexdigest()
+
+    return hmac.compare_digest(expected, signature or "")
 # =========================
 # ROUTER
 # =========================
@@ -1570,7 +1638,7 @@ async def stat_cmd(message: Message):
 
 
 # =========================
-# BROADCAST (DEWA VERSION)
+# BROADCAST (DEWA VERSION - FIXED)
 # =========================
 @router.message(F.text.startswith("/broadcast"))
 async def broadcast_cmd(message: Message):
@@ -1619,19 +1687,20 @@ async def broadcast_cmd(message: Message):
             )
             sent += 1
 
-        except Exception:
+        except Exception as e:
             failed += 1
+            print(f"[BROADCAST ERROR] user {user['user_id']}:", repr(e))
 
         # =========================
-        # SMART DELAY (ANTI BANNED)
+        # SMART DELAY (ANTI FLOOD STABLE)
         # =========================
-        if i % 20 == 0:
-            await asyncio.sleep(1.2)  # heavy pause
+        if i % 25 == 0:
+            await asyncio.sleep(1.5)   # heavy cooldown tiap batch
         else:
-            await asyncio.sleep(random.uniform(0.03, 0.1))  # normal delay
+            await asyncio.sleep(0.08)  # safe normal delay
 
         # =========================
-        # UPDATE PROGRESS (SETIAP 25 USER)
+        # UPDATE PROGRESS
         # =========================
         if i % 25 == 0:
             percent = (i / total) * 100
@@ -1646,8 +1715,8 @@ async def broadcast_cmd(message: Message):
                     "⚡ Please wait...",
                     parse_mode="HTML"
                 )
-            except:
-                pass
+            except Exception as e:
+                print("EDIT STATUS ERROR:", repr(e))
 
     # =========================
     # DONE
@@ -1957,8 +2026,9 @@ async def cleanup_task():
                 last_edit_time.pop(uid, None)
 
 # =========================
-# STARTUP
+# STARTUP (FIXED & CLEAN)
 # =========================
+
 async def main():
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
@@ -1966,7 +2036,7 @@ async def main():
     dp.include_router(router)
 
     # =========================
-    # INIT DATABASE (SAFE)
+    # INIT DATABASE
     # =========================
     try:
         await init_db()
@@ -2005,5 +2075,17 @@ async def main():
             print("❌ BOT SESSION CLOSE ERROR:", repr(e))
 
 
+# =========================
+# FASTAPI + BOT RUNNER
+# =========================
+
 if __name__ == "__main__":
-    asyncio.run(main())
+
+    try:
+        asyncio.run(main())  # 🔥 FIX UTAMA (lebih stabil dari loop manual)
+
+    except KeyboardInterrupt:
+        print("🛑 STOPPED MANUALLY")
+
+    except Exception as e:
+        print("❌ FATAL ERROR:", repr(e))
