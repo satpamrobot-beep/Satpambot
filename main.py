@@ -726,31 +726,37 @@ async def withdraw_page(call: CallbackQuery):
 
     user_id = call.from_user.id
 
-    async with db_pool.acquire() as conn:
-        balance = await conn.fetchval(
-            "SELECT balance FROM users WHERE id=$1",
-            user_id
+    try:
+        async with db_pool.acquire() as conn:
+            balance = await conn.fetchval(
+                "SELECT balance FROM users WHERE id=$1",
+                user_id
+            )
+
+        # 🔥 FIX NULL SAFE
+        balance = balance or 0
+
+        status_text = "🟢 OPEN" if is_withdraw_open() else "🔴 CLOSED"
+
+        text = (
+            "💸 <b>WITHDRAW</b>\n\n"
+            f"💰 Saldo: Rp {balance:,}\n"
+            f"⏰ Status: {status_text}\n\n"
+            f"📌 Minimal: Rp {MIN_WITHDRAW:,}\n"
+            f"📌 Maksimal: Rp {MAX_WITHDRAW:,}\n\n"
+            "🕘 Senin & Jumat: 09:00 - 20:00\n"
+            "❌ Sabtu & Minggu: TUTUP"
         )
 
-    status_text = "🟢 OPEN" if is_withdraw_open() else "🔴 CLOSED"
+        await call.message.edit_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=withdraw_menu_kb()
+        )
 
-    text = (
-        "💸 <b>WITHDRAW</b>\n\n"
-        f"💰 Saldo: Rp {balance:,}\n"
-        f"⏰ Status: {status_text}\n\n"
-        f"📌 Minimal: Rp {MIN_WITHDRAW:,}\n"
-        f"📌 Maksimal: Rp {MAX_WITHDRAW:,}\n\n"
-        "🕘 Senin & Jumat: 09:00 - 20:00\n"
-        "❌ Sabtu & Minggu: TUTUP"
-    )
-
-    await call.message.edit_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=withdraw_menu_kb()
-    )
-
-
+    except Exception as e:
+        print("WITHDRAW ERROR:", repr(e))
+        await call.message.edit_text("❌ Gagal load withdraw")
 # =========================
 # SET BANK / EWALLET
 # =========================
