@@ -116,7 +116,7 @@ cooldown = {
     "global": {},
     "page": {},
 }
-
+app = FastAPI()
 page_history = {}
 page_cooldown = {}
 user_click_lock = {}
@@ -176,12 +176,100 @@ async def safe_send(func, *args, **kwargs):
             print("ERROR:", e)
             await asyncio.sleep(1)
 
+# =========================
+# FASTAPI INIT (WAJIB DI ATAS)
+# =========================
+
+from fastapi import FastAPI, Request, HTTPException
+import hashlib
+
+app = FastAPI()
+
+DB_POOL = None  # dipakai bersama bot
+
+BAYARGG_SECRET = os.getenv("BAYARGG_SECRET", "SECRET_KAMU")
+
+def verify_signature(data: dict, signature: str):
+    raw = f"{data['invoice_id']}:{data['amount']}:{BAYARGG_SECRET}"
+    calc = hashlib.sha256(raw.encode()).hexdigest()
+    return calc == signature
 
 # =========================
 # ROUTER
 # =========================
 
 router = Router()
+
+# =========================
+# WEBHOOK
+# =========================
+
+@app.post("/bayargg/webhook")
+async def bayargg_webhook(req: Request):
+
+    data = await req.json()
+
+    """
+    expected payload:
+    {
+        "invoice_id": "INV-123-5000",
+        "user_id": 123,
+        "amount": 5000,
+        "status": "PAID",
+        "signature": "xxxxx"
+    }
+    """
+
+    invoice_id = data.get("invoice_id")
+    user_id = data.get("user_id")
+    amount = data.get("amount")
+    status = data.get("status")
+    signature = data.get("signature")
+
+    # =========================
+    # VERIFY SIGNATURE
+    # =========================
+    if not verify_signature(data, signature):
+        raise HTTPException(status_code=403, detail="Invalid signature")
+
+    # =========================
+    # ONLY PAID
+    # =========================
+    if status != "PAID":
+        return {"ok": False, "msg": "not paid"}
+
+    async with DB_POOL.acquire() as conn:
+
+        # =========================
+        # CHECK DUPLICATE (IDEMPOTENT)
+        # =========================
+        existing = await conn.fetchrow(
+            "SELECT status FROM deposits WHERE invoice_id=$1",
+            invoice_id
+        )
+
+        if existing and existing["status"] == "success":
+            return {"ok": True, "msg": "already processed"}
+
+        # =========================
+        # UPDATE DEPOSIT
+        # =========================
+        await conn.execute("""
+        UPDATE deposits
+        SET status='success', paid_at=NOW()
+        WHERE invoice_id=$1
+        """, invoice_id)
+
+        # =========================
+        # ADD BALANCE USER
+        # =========================
+        await conn.execute("""
+        UPDATE users
+        SET balance = balance + $1
+        WHERE user_id = $2
+        """, amount, user_id)
+
+    return {"ok": True, "msg": "payment processed"}
     
 # =========================
 # KEYBOARD
@@ -1875,20 +1963,25 @@ async def cleanup_task():
 # STARTUP
 # =========================
 async def main():
-
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
 
     dp.include_router(router)
 
-    await init_db()
+    # =========================
+    # INIT DATABASE (SAFE)
+    # =========================
+    try:
+        await init_db()
+        print("✅ DB INIT OK")
+    except Exception as e:
+        print("❌ DB INIT FAILED:", repr(e))
+        return
 
     # =========================
-    # START BACKGROUND TASK
+    # BACKGROUND TASK
     # =========================
-    asyncio.create_task(
-        cleanup_task()
-    )
+    asyncio.create_task(cleanup_task())
 
     print("🔥 BOT STARTED")
 
@@ -1896,22 +1989,24 @@ async def main():
         await dp.start_polling(bot)
 
     except Exception as e:
-
-        print(
-            "❌ BOT ERROR:",
-            e
-        )
+        print("❌ BOT ERROR:", repr(e))
 
     finally:
-
         print("💀 SHUTDOWN...")
 
+        global db_pool
         if db_pool:
-            await db_pool.close()
+            try:
+                await db_pool.close()
+            except Exception as e:
+                print("❌ DB CLOSE ERROR:", repr(e))
+            db_pool = None
 
-        await bot.session.close()
-# =========================
-# RUN
-# =========================
+        try:
+            await bot.session.close()
+        except Exception as e:
+            print("❌ BOT SESSION CLOSE ERROR:", repr(e))
+
+
 if __name__ == "__main__":
     asyncio.run(main())
