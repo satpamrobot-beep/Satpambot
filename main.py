@@ -303,7 +303,7 @@ async def bayargg_webhook(req: Request):
     if status != "PAID":
         return {"ok": False, "msg": "not paid"}
 
-    async with DB_POOL.acquire() as conn:
+    async with db_pool.acquire() as conn:
 
         # =========================
         # CHECK DUPLICATE (IDEMPOTENT)
@@ -2026,7 +2026,7 @@ async def cleanup_task():
                 last_edit_time.pop(uid, None)
 
 # =========================
-# STARTUP (FIXED & CLEAN)
+# STARTUP (FIXED FINAL)
 # =========================
 
 async def main():
@@ -2076,16 +2076,13 @@ async def main():
 
 
 # =========================
-# FASTAPI + BOT RUNNER
+# RUNNER (CLEAN FIX)
 # =========================
 
 if __name__ == "__main__":
-
     try:
-        asyncio.run(main())  # 🔥 FIX UTAMA (lebih stabil dari loop manual)
-
+        asyncio.run(main())
     except KeyboardInterrupt:
-        print("🛑 STOPPED MANUALLY")
-
+        print("🛑 STOPPED")
     except Exception as e:
-        print("❌ FATAL ERROR:", repr(e))
+        print("❌ FATAL:", repr(e))
