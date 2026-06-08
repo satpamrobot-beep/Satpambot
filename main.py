@@ -731,12 +731,6 @@ from datetime import datetime
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # =========================
-# STATE
-# =========================
-
-user_state = {}
-
-# =========================
 # LIMIT CONFIG
 # =========================
 
@@ -953,7 +947,7 @@ async def wd_provider(call: CallbackQuery):
 # STEP 4 - HANDLE INPUT
 # =========================
 
-@router.message()
+@router.message(F.text)
 async def wd_input(message: Message):
 
     user_id = message.from_user.id
