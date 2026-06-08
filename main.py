@@ -520,18 +520,19 @@ async def create_bayargg_invoice(user_id: int, amount: int):
     print("STATUS:", r.status_code)
     print("RESPONSE:", r.text)
 
-    if r.status_code != 200:
-        raise Exception(f"BayarGG error: {r.text}")
+    data = r.json()
 
-    try:
-        data = r.json()
-    except Exception:
-        raise Exception(f"Invalid JSON response: {r.text}")
+    qr_url = (
+        data.get("qr_url")
+        or data.get("qr")
+        or data.get("qrcode")
+        or data.get("payment_url")
+    )
 
     return {
         "invoice_id": invoice_id,
         "pay_url": data.get("payment_url"),
-        "qr_url": data.get("qr_url")
+        "qr_url": qr_url
     }
 # =========================
 # HANDLE NOMINAL
