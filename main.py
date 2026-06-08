@@ -457,6 +457,156 @@ async def start(message: Message, bot: Bot):
         reply_markup=keyboard,
         parse_mode="HTML"
     )
+
+# =========================
+# DEPOSIT SYSTEM
+# =========================
+
+import httpx
+import time
+
+def deposit_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="2.000", callback_data="dep:2000"),
+            InlineKeyboardButton(text="5.000", callback_data="dep:5000"),
+            InlineKeyboardButton(text="10.000", callback_data="dep:10000"),
+        ],
+        [
+            InlineKeyboardButton(text="15.000", callback_data="dep:15000"),
+            InlineKeyboardButton(text="20.000", callback_data="dep:20000"),
+            InlineKeyboardButton(text="50.000", callback_data="dep:50000"),
+        ],
+        [
+            InlineKeyboardButton(text="🔙 Kembali", callback_data="back_main")
+        ]
+    ])
+
+
+@router.callback_query(F.data == "deposit")
+async def deposit_menu(call: CallbackQuery):
+    await call.message.edit_text(
+        "💳 <b>DEPOSIT</b>\n\nPilih nominal yang ingin kamu isi:",
+        parse_mode="HTML",
+        reply_markup=deposit_kb()
+    )
+    await call.answer()
+
+
+# =========================
+# CREATE INVOICE
+# =========================
+
+async def create_bayargg_invoice(user_id: int, amount: int):
+
+    invoice_id = f"INV-{user_id}-{int(time.time())}"
+
+    payload = {
+        "invoice_id": invoice_id,
+        "amount": amount,
+        "callback_url": "https://your-domain.com/bayargg/webhook",
+        "redirect_url": "https://t.me/your_bot",
+        "customer_id": user_id
+    }
+
+    headers = {
+        "Authorization": f"Bearer {BAYARGG_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(BAYARGG_API_URL, json=payload, headers=headers)
+
+    data = r.json()
+
+    return {
+        "invoice_id": invoice_id,
+        "pay_url": data.get("payment_url"),
+        "qr_url": data.get("qr_url")
+    }
+
+
+# =========================
+# HANDLE NOMINAL
+# =========================
+
+@router.callback_query(F.data.startswith("dep:"))
+async def deposit_nominal(call: CallbackQuery):
+
+    user_id = call.from_user.id
+    amount = int(call.data.split(":")[1])
+
+    await call.answer("⏳ membuat invoice...")
+
+    try:
+        inv = await create_bayargg_invoice(user_id, amount)
+
+        async with db_pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO deposits(invoice_id, user_id, amount, status)
+                VALUES($1,$2,$3,'pending')
+            """, inv["invoice_id"], user_id, amount)
+
+        text = (
+            "💳 <b>INVOICE CREATED</b>\n\n"
+            f"💰 Amount: Rp {amount:,}\n"
+            f"🧾 Invoice: <code>{inv['invoice_id']}</code>\n\n"
+            "📌 Scan QR di bawah untuk pembayaran"
+        )
+
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🔄 Saya Sudah Bayar",
+                    callback_data=f"checkpay:{inv['invoice_id']}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔙 Back",
+                    callback_data="deposit"
+                )
+            ]
+        ])
+
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+
+        if inv.get("qr_url"):
+            await call.message.answer_photo(inv["qr_url"])
+
+    except Exception as e:
+        print("DEPOSIT ERROR:", repr(e))
+        await call.message.edit_text("❌ Gagal membuat invoice")
+
+
+# =========================
+# CHECK PAYMENT
+# =========================
+
+@router.callback_query(F.data.startswith("checkpay:"))
+async def check_payment(call: CallbackQuery):
+
+    invoice_id = call.data.split(":")[1]
+
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT status, amount
+            FROM deposits
+            WHERE invoice_id=$1
+        """, invoice_id)
+
+    if not row:
+        return await call.answer("❌ Invoice tidak ditemukan", show_alert=True)
+
+    if row["status"] == "success":
+        await call.message.edit_text(
+            "✅ <b>PEMBAYARAN BERHASIL</b>\n\n"
+            f"💰 Rp {row['amount']:,} sudah masuk saldo",
+            parse_mode="HTML"
+        )
+    else:
+        await call.answer("⏳ Belum dibayar / masih pending", show_alert=True)
+        
 # =========================
 # UP FILE INIT
 # =========================
