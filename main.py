@@ -3162,7 +3162,7 @@ async def main():
     # =========================
     # FASTAPI
     # =========================
-    port = int(os.getenv("PORT", 8000"))
+    port = int(os.getenv("PORT", "8000"))
 
     config = uvicorn.Config(
         app=app,
