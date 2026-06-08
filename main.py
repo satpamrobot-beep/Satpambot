@@ -11,6 +11,7 @@ import time
 import asyncio
 import random
 
+from collections import defaultdict
 from dotenv import load_dotenv
 from aiogram.filters import CommandStart
 from aiogram import Bot, Dispatcher, Router, F
@@ -45,7 +46,11 @@ ADMINS = set(
     if x.strip().isdigit()
 )
 
-FORCE_CHANNEL = int(os.getenv("FORCE_CHANNEL"))
+FORCE_CHANNEL = int(os.getenv("FORCE_CHANNEL", "-1003712587847"))
+FORCE_CHANNEL_LINK = os.getenv(
+    "FORCE_CHANNEL_LINK",
+    "https://t.me/+3g_yhHwxCrc5ZTg9"
+)
 UPDATE_CHANNEL = os.getenv("UPDATE_CHANNEL")
 NOTIFICATION_CHANNEL = int(os.getenv("NOTIFICATION_CHANNEL"))
 VIP_LINK = os.getenv("VIP_LINK")
@@ -193,19 +198,6 @@ def get_keyboard():
         resize_keyboard=True,
         input_field_placeholder="Upload atau ambil file... 😏"
     )
-
-# =========================
-# CONFIG FORCE SUB
-# =========================
-
-# PRIVATE CHANNEL
-FORCE_CHANNEL = -1003712587847
-FORCE_CHANNEL_LINK = "https://t.me/+3g_yhHwxCrc5ZTg9"
-
-# PUBLIC CHANNEL
-# FORCE_CHANNEL = "@mychannel"
-# FORCE_CHANNEL_LINK = "https://t.me/mychannel"
-
 
 # =========================
 # CHECK FORCE SUB
@@ -570,7 +562,7 @@ def generate_code(v, p, d):
     base = f"{v}{p}{d}{secrets.token_hex(4)}"
     rand = hashlib.sha1(base.encode()).hexdigest()[:12]
 
-    return f"xywukai_{v}v_{p}p_{d}d_{rand}"
+    return f"decodefilebot_{v}v_{p}p_{d}d_{rand}"
 
 
 @router.callback_query(F.data == "upload_done")
@@ -1026,10 +1018,11 @@ async def render_page(user_id: int, bot, chat_id: int):
             "SEND PANEL ERROR:",
             e
         )
+
 # =========================
 # PAGINATION LOCK
 # =========================
-pagination_lock = {}
+pagination_lock = defaultdict(asyncio.Lock)
 
 # =========================
 # SINGLE PAGINATION HANDLER
@@ -1043,14 +1036,9 @@ async def pagination(call: CallbackQuery):
     user_id = call.from_user.id
 
     # =========================
-    # ANTI DOUBLE CLICK
+    # LOCK USER (ANTI SPAM CLICK)
     # =========================
-    if pagination_lock.get(user_id):
-        return await call.answer()
-
-    pagination_lock[user_id] = True
-
-    try:
+    async with pagination_lock[user_id]:
 
         state = user_states.get(user_id)
 
@@ -1133,13 +1121,6 @@ async def pagination(call: CallbackQuery):
 
         await call.answer()
 
-    finally:
-
-        pagination_lock.pop(
-            user_id,
-            None
-        )
-
 # =========================
 # NOOP
 # =========================
@@ -1177,7 +1158,7 @@ async def receive_code(message: Message):
         return await message.answer("⏳ Jangan spam")
 
     codes = re.findall(
-        r"\bxywukai_[A-Za-z0-9_]+\b",
+        r"decodefilebot_\d+v_\d+p_\d+d_[a-f0-9]{12}",
         message.text or ""
     )
 
@@ -1778,10 +1759,6 @@ async def cleanup_task():
                 upload_sessions.pop(uid, None)
 
                 last_edit_time.pop(uid, None)
-
-                page_cooldown.pop(uid, None)
-
-                user_click_lock.pop(uid, None)
 
 # =========================
 # STARTUP
