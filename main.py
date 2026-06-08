@@ -548,29 +548,49 @@ async def deposit_nominal(call: CallbackQuery):
     await call.answer("⏳ membuat invoice...")
 
     try:
-        # 🔥 INI YANG KAMU TARUH
         inv = await create_bayargg_invoice(user_id, amount)
 
         print("INV DEBUG:", inv)
 
-        await call.message.edit_text(
-            f"💳 INVOICE CREATED\n\n"
+        qr_url = inv.get("qr_url")
+
+        # 1. kirim invoice + QR langsung
+        msg = await call.message.edit_text(
+            f"💳 <b>INVOICE CREATED</b>\n\n"
             f"💰 Amount: Rp {amount:,}\n"
             f"🧾 Invoice: <code>{inv['invoice_id']}</code>\n\n"
-            "📌 Scan QR di bawah"
+            f"📌 Scan QR di bawah",
+            parse_mode="HTML"
         )
 
-        if inv.get("qr_url"):
-            await call.message.answer_photo(inv["qr_url"])
-        else:
-            await call.message.answer("❌ QR tidak tersedia dari API")
+        qr_msg = None
 
-        # simpan ke DB
+        if qr_url:
+            qr_msg = await call.message.answer_photo(
+                photo=qr_url,
+                caption="📌 QRIS aktif (auto delete 1 menit)"
+            )
+
+        # 2. AUTO DELETE QR AFTER 60 DETIK
+        async def delete_qr():
+            await asyncio.sleep(60)
+            try:
+                if qr_msg:
+                    await qr_msg.delete()
+            except:
+                pass
+
+        asyncio.create_task(delete_qr())
+
+        # 3. simpan ke DB
         async with db_pool.acquire() as conn:
             await conn.execute("""
                 INSERT INTO deposits(invoice_id, user_id, amount, status)
                 VALUES($1,$2,$3,'pending')
             """, inv["invoice_id"], user_id, amount)
+
+        # 4. AUTO CHECK PAYMENT (tanpa tombol)
+        asyncio.create_task(auto_check_payment(inv["invoice_id"], call))
 
     except Exception as e:
         print("DEPOSIT ERROR:", repr(e))
@@ -594,16 +614,23 @@ async def check_payment(call: CallbackQuery):
     if not row:
         return await call.answer("❌ Invoice tidak ditemukan", show_alert=True)
 
-    if row["status"] == "success":
+    status = row["status"]
+
+    if status == "success":
         await call.message.edit_text(
             "✅ <b>PEMBAYARAN BERHASIL</b>\n\n"
             f"💰 Rp {row['amount']:,} sudah masuk saldo",
             parse_mode="HTML"
         )
-    elif row["status"] == "pending":
-        await call.answer("⏳ Masih pending", show_alert=True)
+
+    elif status == "pending":
+        await call.answer("⏳ Pembayaran masih pending", show_alert=True)
+
+    elif status == "failed":
+        await call.answer("❌ Pembayaran gagal", show_alert=True)
+
     else:
-        await call.answer(f"⚠️ Status: {row['status']}", show_alert=True)
+        await call.answer(f"⚠️ Status tidak dikenal: {status}", show_alert=True)
         
 # =========================
 # UP FILE INIT
