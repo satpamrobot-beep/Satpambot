@@ -3105,15 +3105,18 @@ async def safe_task(coro, name="task"):
 
 
 # =========================
-# MAIN
+# MAIN (FIXED PRODUCTION)
 # =========================
 async def main():
+    global bot, dp  # 🔥 WAJIB kalau dipakai di file lain
 
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN tidak ditemukan")
 
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL tidak ditemukan")
+
+    print("🚨 FILE KELOAD")
 
     bot = Bot(BOT_TOKEN)
     dp = Dispatcher()
@@ -3123,7 +3126,7 @@ async def main():
     shutdown_event = asyncio.Event()
 
     # =========================
-    # SIGNAL HANDLER (WAJIB VPS)
+    # SIGNAL HANDLER
     # =========================
     def stop_signal(*args):
         print("⚠️ SIGNAL STOP RECEIVED")
@@ -3131,7 +3134,11 @@ async def main():
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stop_signal)
+        try:
+            loop.add_signal_handler(sig, stop_signal)
+        except NotImplementedError:
+            # 🔥 fix Railway / Windows
+            pass
 
     # =========================
     # CLEAN WEBHOOK
@@ -3142,13 +3149,13 @@ async def main():
     print(f"🤖 LOGIN: @{me.username}")
 
     # =========================
-    # DB INIT
+    # INIT DB
     # =========================
     await init_db()
     print("🗄 DATABASE READY")
 
     # =========================
-    # BACKGROUND TASK (ANTI MATI)
+    # BACKGROUND TASK
     # =========================
     tasks = set()
 
@@ -3160,7 +3167,7 @@ async def main():
     print("⚙️ BACKGROUND TASK STARTED")
 
     # =========================
-    # FASTAPI
+    # FASTAPI SERVER
     # =========================
     port = int(os.getenv("PORT", 8000))
 
@@ -3168,8 +3175,7 @@ async def main():
         app=app,
         host="0.0.0.0",
         port=port,
-        log_level="info",
-        loop="asyncio"
+        log_level="info"
     )
 
     server = uvicorn.Server(config)
@@ -3177,29 +3183,38 @@ async def main():
     print("🚀 BOT STARTING...")
 
     # =========================
-    # RUN BOTH (SAFE)
+    # RUN TASKS (FIXED)
     # =========================
     polling_task = asyncio.create_task(dp.start_polling(bot))
     api_task = asyncio.create_task(server.serve())
+    shutdown_task = asyncio.create_task(shutdown_event.wait())  # 🔥 FIX
 
     done, pending = await asyncio.wait(
-        [polling_task, api_task, shutdown_event.wait()],
+        [polling_task, api_task, shutdown_task],
         return_when=asyncio.FIRST_COMPLETED
     )
 
     print("⚠️ STOPPING SYSTEM...")
 
+    # =========================
+    # CANCEL TASK
+    # =========================
     for task in pending:
         task.cancel()
 
+    await asyncio.gather(*pending, return_exceptions=True)
+
     # =========================
-    # CLEANUP
+    # STOP BACKGROUND TASK
     # =========================
     for task in tasks:
         task.cancel()
 
     await asyncio.gather(*tasks, return_exceptions=True)
 
+    # =========================
+    # CLOSE DB
+    # =========================
     try:
         if db_pool:
             await db_pool.close()
@@ -3207,8 +3222,21 @@ async def main():
     except Exception as e:
         print("DB CLOSE ERROR:", e)
 
+    # =========================
+    # CLOSE BOT
+    # =========================
     try:
         await bot.session.close()
         print("🤖 BOT CLOSED")
     except Exception as e:
         print("BOT CLOSE ERROR:", e)
+
+
+# =========================
+# RUN
+# =========================
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("👋 MANUAL STOP")
