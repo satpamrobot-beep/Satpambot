@@ -872,7 +872,7 @@ async def wd_settings(call: CallbackQuery):
 async def wd_type(call: CallbackQuery):
 
     t = call.data.split(":")[1]
-    user_state[call.from_user.id] = {"type": t}
+    user_states[call.from_user.id] = {"type": t}
 
     if t == "bank":
         options = BANKS
@@ -908,11 +908,11 @@ async def wd_provider(call: CallbackQuery):
     # =========================
     # SAFETY CHECK STATE
     # =========================
-    if user_id not in user_state:
-        user_state[user_id] = {}
+    if user_id not in user_states:
+        user_states[user_id] = {}
 
-    user_state[user_id]["provider"] = provider
-    user_state[user_id]["mode"] = "wd_input"
+    user_states[user_id]["provider"] = provider
+    user_states[user_id]["mode"] = "wd_input"
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
