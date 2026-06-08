@@ -230,27 +230,30 @@ async def init_db():
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_medias_code ON medias(code)")
 
             # =========================
-            # TRANSACTIONS
+            # TRANSACTIONS (ANTI ERROR)
             # =========================
             await conn.execute("""
             CREATE TABLE IF NOT EXISTS transactions(
                 id SERIAL PRIMARY KEY,
-                order_id TEXT UNIQUE NOT NULL,
-                user_id BIGINT NOT NULL,
-                code TEXT,
-                amount BIGINT DEFAULT 0,
-                fee BIGINT DEFAULT 0,
-                net BIGINT DEFAULT 0,
-                status TEXT DEFAULT 'pending',
-                created_at TIMESTAMP DEFAULT NOW()
+                order_id TEXT UNIQUE NOT NULL
             )
             """)
 
+            # 🔥 AUTO MIGRATION
+            await conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS user_id BIGINT")
+            await conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS code TEXT")
+            await conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS amount BIGINT DEFAULT 0")
+            await conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS fee BIGINT DEFAULT 0")
+            await conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS net BIGINT DEFAULT 0")
+            await conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'pending'")
+            await conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()")
+
+            # 🔥 INDEX
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_tx_user ON transactions(user_id)")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_tx_order ON transactions(order_id)")
 
             # =========================
-            # PAYMENTS (FIXED)
+            # PAYMENTS
             # =========================
             await conn.execute("""
             CREATE TABLE IF NOT EXISTS payments(
@@ -273,7 +276,6 @@ async def init_db():
     except Exception as e:
         print(f"❌ Database Error: {e}")
         raise
-
 # =========================
 # CACHE / MEMORY
 # =========================
