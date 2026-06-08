@@ -504,8 +504,8 @@ async def create_bayargg_invoice(user_id: int, amount: int):
     payload = {
         "invoice_id": invoice_id,
         "amount": amount,
-        "callback_url": "https://your-domain.com/bayargg/webhook",
-        "redirect_url": "https://t.me/your_bot",
+        "callback_url": "https://decodefilebot-production.up.railway.app/bayargg/webhook",
+        "redirect_url": "https://t.me/decodefilebot",
         "customer_id": user_id
     }
 
