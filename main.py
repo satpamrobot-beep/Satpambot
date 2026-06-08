@@ -937,7 +937,7 @@ async def wd_provider(call: CallbackQuery):
         "⚠️ Pastikan data benar sebelum kirim\n"
         "❗ Kesalahan input bukan tanggung jawab sistem\n\n"
         "💡 Contoh:\n"
-        "<code>Yeni Kurniawati | 085784890726</code>",
+        "<code>Nama | 0812345678910</code>",
         parse_mode="HTML",
         reply_markup=kb
     )
@@ -951,7 +951,7 @@ async def wd_provider(call: CallbackQuery):
 async def wd_input(message: Message):
 
     user_id = message.from_user.id
-    state = user_state.get(user_id)
+    state = user_states.get(user_id)
 
     if not state or state.get("mode") != "wd_input":
         return
@@ -1876,7 +1876,7 @@ async def start_get(message: Message):
 # =========================
 # RECEIVE CODE
 # =========================
-@router.message(F.text & ~F.text.startswith("/"))
+@router.message(F.text.regexp(r"^decodefilebot_"))
 async def receive_code(message: Message):
 
     user_id = message.from_user.id
