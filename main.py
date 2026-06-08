@@ -200,167 +200,109 @@ def get_keyboard():
     )
 
 # =========================
-# CHECK FORCE SUB
-# =========================
-
-async def check_force_sub(bot: Bot, user_id: int, channel):
-    try:
-        member = await bot.get_chat_member(
-            chat_id=channel,
-            user_id=user_id
-        )
-
-        return member.status in (
-            "member",
-            "administrator",
-            "creator"
-        )
-
-    except Exception as e:
-        print("FORCE SUB ERROR:", e)
-        return False
-
-
-# =========================
-# FORCE SUB KEYBOARD
-# =========================
-
-def force_kb():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="📢 Join Channel",
-                    url=FORCE_CHANNEL_LINK
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="✅ Sudah Join",
-                    callback_data="check_sub"
-                )
-            ]
-        ]
-    )
-
-
-# =========================
-# START
+# START DAN FORCE SUB
 # =========================
 
 @router.message(F.text == "/start")
 async def start(message: Message, bot: Bot):
 
     user = message.from_user
+    user_id = user.id
+    username = user.username or "No Username"
 
-    # SAVE USER
+    # =========================
+    # SAVE USER (POSTGRES)
+    # =========================
     try:
         await add_user(
-            user.id,
-            user.username or "none",
+            user_id,
+            username,
             user.full_name
         )
     except Exception as e:
-        print("ADD USER ERROR:", e)
+        print("ADD USER ERROR:", repr(e))
 
-    # ANTI SPAM
-    if not user_limit(user.id):
-        return await safe_send(
-            message.answer,
-            "⏳ Jangan spam ya 😏"
-        )
-
-    # FORCE SUB
+    # =========================
+    # FORCE SUB CHECK
+    # =========================
     if FORCE_CHANNEL:
+        try:
+            member = await bot.get_chat_member(FORCE_CHANNEL, user_id)
 
-        joined = await check_force_sub(
-            bot,
-            user.id,
-            FORCE_CHANNEL
-        )
+            if member.status not in ("member", "administrator", "creator"):
+                return await message.answer(
+                    "⚠️ AKSES DITOLAK\n\n"
+                    "Kamu harus join channel dulu sebelum pakai bot.",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text="📢 Join Channel",
+                                url=FORCE_CHANNEL_LINK
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                text="✅ Sudah Join",
+                                callback_data="check_sub"
+                            )
+                        ]
+                    ])
+                )
 
-        if not joined:
-            return await safe_send(
-                message.answer,
-                "⚠️ AKSES DITOLAK\n\n"
-                "😏 Kamu belum join channel.\n"
-                "Join dulu baru bisa lanjut.",
-                reply_markup=force_kb()
-            )
+        except Exception as e:
+            print("FORCE SUB ERROR:", repr(e))
+            return await message.answer("⚠️ Error force sub, coba lagi nanti.")
 
-    # MENU
-    await safe_send(
-        message.answer,
-        "🔥 BOT ONLINE\n\n"
-        "😏 Selamat datang di FILE CODE SYSTEM.\n\n"
-        "━━━━━━━━━━━━━━\n"
-        "📌 MENU\n"
-        "━━━━━━━━━━━━━━\n"
-        "📤 Up File → upload file\n"
-        "📥 Get File → ambil file pakai CODE\n\n"
-        "━━━━━━━━━━━━━━\n"
-        "💀 NOTE\n"
-        "━━━━━━━━━━━━━━\n"
-        "• CODE hilang = tanggung jawab user\n"
-        "• Jangan spam 😏",
-        reply_markup=get_keyboard()
-    )
-
-
-# =========================
-# CHECK SUB
-# =========================
-
-@router.callback_query(F.data == "check_sub")
-async def check_sub(call: CallbackQuery, bot: Bot):
-
-    user_id = call.from_user.id
-
-    # ANTI SPAM
-    if not user_limit(user_id):
-        return await call.answer(
-            "⏳ Jangan spam",
-            show_alert=True
-        )
-
-    # FORCE SUB OFF
-    if not FORCE_CHANNEL:
-        return await call.answer(
-            "Force Sub OFF",
-            show_alert=True
-        )
-
-    # CHECK MEMBER
-    joined = await check_force_sub(
-        bot,
-        user_id,
-        FORCE_CHANNEL
-    )
-
-    if not joined:
-        return await call.answer(
-            "❌ Kamu belum join channel",
-            show_alert=True
-        )
-
-    # VERIFIED
+    # =========================
+    # GET BALANCE (POSTGRES)
+    # =========================
     try:
-        await call.message.edit_text(
-            "✅ VERIFIED\n\n"
-            "Akses berhasil dibuka."
-        )
-    except Exception:
-        pass
+        balance = await get_balance(user_id)
+    except:
+        balance = 0
 
-    await safe_send(
-        call.message.answer,
-        "🔥 AKSES DIBUKA\n\n"
-        "😏 Silakan gunakan bot.",
-        reply_markup=get_keyboard()
+    # =========================
+    # TEXT DASHBOARD
+    # =========================
+    text = (
+        "🔥 <b>DECODEFILEBOT</b>\n\n"
+        f"👤 Username: @{username}\n"
+        f"🆔 ID: <code>{user_id}</code>\n"
+        f"💰 Saldo: <b>Rp {balance:,}</b>\n\n"
+        "━━━━━━━━━━━━━━\n"
+        "📌 DASHBOARD MENU\n"
+        "━━━━━━━━━━━━━━\n"
     )
 
-    await call.answer(
-        "Berhasil diverifikasi ✅"
+    # =========================
+    # KEYBOARD
+    # =========================
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton("💳 Deposit", callback_data="deposit"),
+            InlineKeyboardButton("💸 Withdraw", callback_data="withdraw"),
+        ],
+        [
+            InlineKeyboardButton("🔥 Code Trending", callback_data="trending"),
+        ],
+        [
+            InlineKeyboardButton("🆕 Code New", callback_data="code_new"),
+        ],
+        [
+            InlineKeyboardButton("📊 Statistik", callback_data="statistik"),
+        ],
+        [
+            InlineKeyboardButton("❓ Help", callback_data="help"),
+        ],
+    ])
+
+    # =========================
+    # SEND DASHBOARD
+    # =========================
+    await message.answer(
+        text,
+        reply_markup=keyboard,
+        parse_mode="HTML"
     )
 # =========================
 # UP FILE INIT
