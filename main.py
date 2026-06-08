@@ -278,23 +278,23 @@ async def start(message: Message, bot: Bot):
     # KEYBOARD
     # =========================
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton("💳 Deposit", callback_data="deposit"),
-            InlineKeyboardButton("💸 Withdraw", callback_data="withdraw"),
-        ],
-        [
-            InlineKeyboardButton("🔥 Code Trending", callback_data="trending"),
-        ],
-        [
-            InlineKeyboardButton("🆕 Code New", callback_data="code_new"),
-        ],
-        [
-            InlineKeyboardButton("📊 Statistik", callback_data="statistik"),
-        ],
-        [
-            InlineKeyboardButton("❓ Help", callback_data="help"),
-        ],
-    ])
+    [
+        InlineKeyboardButton(text="💳 Deposit", callback_data="deposit"),
+        InlineKeyboardButton(text="💸 Withdraw", callback_data="withdraw"),
+    ],
+    [
+        InlineKeyboardButton(text="🔥 Code Trending", callback_data="trending"),
+    ],
+    [
+        InlineKeyboardButton(text="🆕 Code New", callback_data="code_new"),
+    ],
+    [
+        InlineKeyboardButton(text="📊 Statistik", callback_data="statistik"),
+    ],
+    [
+        InlineKeyboardButton(text="❓ Help", callback_data="help"),
+    ],
+])
 
     # =========================
     # SEND DASHBOARD
