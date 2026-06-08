@@ -461,6 +461,51 @@ async def start(message: Message, bot: Bot):
         parse_mode="HTML"
     )
 
+@router.callback_query(F.data == "home")
+async def home(call: CallbackQuery, bot: Bot):
+
+    user = call.from_user
+    user_id = user.id
+    username = user.username or "No Username"
+
+    # ambil saldo
+    try:
+        balance = await get_balance(user_id)
+    except:
+        balance = 0
+
+    text = (
+        "🔥 <b>DECODEFILEBOT</b>\n\n"
+        f"👤 Username: @{username}\n"
+        f"🆔 ID: <code>{user_id}</code>\n"
+        f"💰 Saldo: <b>Rp {balance:,}</b>\n\n"
+        "━━━━━━━━━━━━━━\n"
+        "📌 DASHBOARD MENU\n"
+        "━━━━━━━━━━━━━━\n"
+    )
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="💳 Deposit", callback_data="deposit"),
+            InlineKeyboardButton(text="💸 Withdraw", callback_data="withdraw"),
+        ],
+        [
+            InlineKeyboardButton(text="🔥 Code Trending", callback_data="trending"),
+        ],
+        [
+            InlineKeyboardButton(text="🆕 Code New", callback_data="code_new"),
+        ],
+        [
+            InlineKeyboardButton(text="📊 Statistik", callback_data="statistik"),
+        ],
+        [
+            InlineKeyboardButton(text="❓ Help", callback_data="help"),
+        ],
+    ])
+
+    await call.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
+    await call.answer()
+
 # =========================
 # DEPOSIT KEYBOARD
 # =========================
@@ -478,7 +523,7 @@ def deposit_kb():
             InlineKeyboardButton(text="50.000", callback_data="dep:50000"),
         ],
         [
-            InlineKeyboardButton(text="🔙 Kembali", callback_data="back_main")
+            InlineKeyboardButton(text="🔙 Kembali", callback_data="home")
         ]
     ])
 
@@ -787,7 +832,7 @@ async def withdraw_page(call: CallbackQuery):
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💸 REQUEST WITHDRAW", callback_data="wd_request")],
             [InlineKeyboardButton(text="⚙️ ATUR BANK / EWALLET", callback_data="wd_settings")],
-            [InlineKeyboardButton(text="🔙 KEMBALI", callback_data="back_main")]
+            [InlineKeyboardButton(text="🔙 KEMBALI", callback_data="home")]
         ])
 
         await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
@@ -862,20 +907,48 @@ async def wd_type(call: CallbackQuery):
 @router.callback_query(F.data.startswith("wd_provider:"))
 async def wd_provider(call: CallbackQuery):
 
+    user_id = call.from_user.id
+
     provider = call.data.split(":")[1]
 
-    user_state[call.from_user.id]["provider"] = provider
-    user_state[call.from_user.id]["mode"] = "wd_input"
+    # =========================
+    # SAFETY CHECK STATE
+    # =========================
+    if user_id not in user_state:
+        user_state[user_id] = {}
+
+    user_state[user_id]["provider"] = provider
+    user_state[user_id]["mode"] = "wd_input"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🔙 Kembali",
+                callback_data="wd_settings"
+            ),
+            InlineKeyboardButton(
+                text="❌ Cancel",
+                callback_data="wd_cancel"
+            )
+        ]
+    ])
 
     await call.message.edit_text(
         "✍️ <b>MASUKKAN DATA WITHDRAW</b>\n\n"
-        "Format WAJIB:\n"
-        "<code>Nama Lengkap | Nomor Rekening / Wallet</code>\n\n"
-        "⚠️ Pastikan data benar, salah input bukan tanggung jawab sistem",
-        parse_mode="HTML"
+        f"🏦 Provider: <b>{provider}</b>\n\n"
+        "━━━━━━━━━━━━━━\n"
+        "📌 FORMAT WAJIB:\n"
+        "<code>Nama Lengkap | Nomor Rekening / Wallet</code>\n"
+        "━━━━━━━━━━━━━━\n\n"
+        "⚠️ Pastikan data benar sebelum kirim\n"
+        "❗ Kesalahan input bukan tanggung jawab sistem\n\n"
+        "💡 Contoh:\n"
+        "<code>Yeni Kurniawati | 085784890726</code>",
+        parse_mode="HTML",
+        reply_markup=kb
     )
 
-
+    await call.answer()
 # =========================
 # STEP 4 - HANDLE INPUT
 # =========================
@@ -2361,6 +2434,10 @@ def back_help_kb():
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
+                InlineKeyboardButton(
+                    text="🏠 Home",
+                    callback_data="home"
+                ),
                 InlineKeyboardButton(
                     text="🔙 Kembali",
                     callback_data="back_help"
