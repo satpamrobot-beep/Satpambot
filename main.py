@@ -58,7 +58,7 @@ FORCE_CHANNEL_LINK = os.getenv(
 UPDATE_CHANNEL = os.getenv("UPDATE_CHANNEL")
 NOTIFICATION_CHANNEL = int(os.getenv("NOTIFICATION_CHANNEL"))
 VIP_LINK = os.getenv("VIP_LINK")
-BAYARGG_API_URL = "https://api.bayargg.com/v1/invoice/create"  # contoh
+BAYARGG_API_URL = "https://www.bayar.gg/api/create-payment.php"  # contoh
 BAYARGG_API_KEY = os.getenv("BAYARGG_API_KEY")
 
 # ====================
@@ -502,30 +502,37 @@ async def create_bayargg_invoice(user_id: int, amount: int):
     invoice_id = f"INV-{user_id}-{int(time.time())}"
 
     payload = {
-        "invoice_id": invoice_id,
         "amount": amount,
+        "description": f"Deposit user {user_id}",
+        "payment_method": "qris",
         "callback_url": "https://satpambot-production.up.railway.app/bayargg/webhook",
-        "redirect_url": "https://t.me/decodefilebot",
-        "customer_id": user_id
+        "redirect_url": "https://t.me/decodefilebot"
     }
 
     headers = {
-        "Authorization": f"Bearer {BAYARGG_API_KEY}",
+        "X-API-Key": BAYARGG_API_KEY,
         "Content-Type": "application/json"
     }
 
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(BAYARGG_API_URL, json=payload, headers=headers)
 
-    data = r.json()
+    print("STATUS:", r.status_code)
+    print("RESPONSE:", r.text)
+
+    if r.status_code != 200:
+        raise Exception(f"BayarGG error: {r.text}")
+
+    try:
+        data = r.json()
+    except Exception:
+        raise Exception(f"Invalid JSON response: {r.text}")
 
     return {
         "invoice_id": invoice_id,
         "pay_url": data.get("payment_url"),
         "qr_url": data.get("qr_url")
     }
-
-
 # =========================
 # HANDLE NOMINAL
 # =========================
