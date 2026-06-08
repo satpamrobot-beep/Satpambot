@@ -13,6 +13,7 @@ import random
 import hashlib
 import hmac
 import uvicorn
+import httpx
 
 from fastapi import FastAPI, Request, HTTPException
 from collections import defaultdict
@@ -459,11 +460,8 @@ async def start(message: Message, bot: Bot):
     )
 
 # =========================
-# DEPOSIT SYSTEM
+# DEPOSIT KEYBOARD
 # =========================
-
-import httpx
-import time
 
 def deposit_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -483,22 +481,31 @@ def deposit_kb():
     ])
 
 
+# =========================
+# MENU DEPOSIT
+# =========================
+
 @router.callback_query(F.data == "deposit")
 async def deposit_menu(call: CallbackQuery):
     await call.message.edit_text(
-        "💳 <b>DEPOSIT</b>\n\nPilih nominal yang ingin kamu isi:",
+        "💳 <b>DEPOSIT</b>\n\nPilih nominal:",
         parse_mode="HTML",
         reply_markup=deposit_kb()
     )
     await call.answer()
 
 
-import time
-import httpx
+# =========================
+# ANTI DOUBLE INVOICE CACHE
+# =========================
+ACTIVE_INVOICE = {}  # user_id -> invoice_id
+
+
+# =========================
+# CREATE INVOICE
+# =========================
 
 async def create_bayargg_invoice(user_id: int, amount: int):
-
-    invoice_id = f"INV-{user_id}-{int(time.time())}"
 
     payload = {
         "amount": amount,
@@ -516,27 +523,55 @@ async def create_bayargg_invoice(user_id: int, amount: int):
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(BAYARGG_API_URL, json=payload, headers=headers)
 
-    print("STATUS:", r.status_code)
-    print("RESPONSE:", r.text)
-
     res = r.json()
     data = res.get("data") or {}
 
     return {
-        # 🔥 fallback invoice biar aman
-        "invoice_id": data.get("invoice_id", invoice_id),
-
+        "invoice_id": data.get("invoice_id"),
         "payment_url": data.get("payment_url"),
-
-        # 🔥 QR FIX TOTAL
-        "qr_url": (
-            data.get("qris_static_image_url")
-            or data.get("qris_dynamic_image_url")
-            or data.get("payment_url")
-        )
+        "qr_url": data.get("qris_static_image_url")
     }
+
+
 # =========================
-# HANDLE NOMINAL
+# AUTO CHECK PAYMENT LOOP
+# =========================
+
+async def auto_check_payment(invoice_id: str, user_id: int, message):
+    """
+    auto detect payment + auto update saldo
+    """
+
+    for _ in range(30):  # ± 5 menit (30x10s)
+        await asyncio.sleep(10)
+
+        async with db_pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT status, amount
+                FROM deposits
+                WHERE invoice_id=$1
+            """, invoice_id)
+
+            if not row:
+                return
+
+            if row["status"] == "success":
+                await message.edit_text(
+                    "✅ <b>PEMBAYARAN BERHASIL</b>\n\n"
+                    f"💰 Rp {row['amount']:,} sudah masuk saldo",
+                    parse_mode="HTML"
+                )
+                ACTIVE_INVOICE.pop(user_id, None)
+                return
+
+            if row["status"] == "expired":
+                await message.edit_text("⛔ Invoice expired")
+                ACTIVE_INVOICE.pop(user_id, None)
+                return
+
+
+# =========================
+# HANDLE DEPOSIT
 # =========================
 
 @router.callback_query(F.data.startswith("dep:"))
@@ -547,56 +582,73 @@ async def deposit_nominal(call: CallbackQuery):
 
     await call.answer("⏳ membuat invoice...")
 
+    # =========================
+    # ANTI DOUBLE INVOICE
+    # =========================
+    if user_id in ACTIVE_INVOICE:
+        return await call.message.answer("⚠️ Kamu masih punya invoice aktif")
+
     try:
         inv = await create_bayargg_invoice(user_id, amount)
 
-        print("INV DEBUG:", inv)
-
+        invoice_id = inv["invoice_id"]
         qr_url = inv.get("qr_url")
 
-        # 1. kirim invoice + QR langsung
+        ACTIVE_INVOICE[user_id] = invoice_id
+
         msg = await call.message.edit_text(
-            f"💳 <b>INVOICE CREATED</b>\n\n"
-            f"💰 Amount: Rp {amount:,}\n"
-            f"🧾 Invoice: <code>{inv['invoice_id']}</code>\n\n"
-            f"📌 Scan QR di bawah",
+            "💳 <b>INVOICE CREATED</b>\n\n"
+            f"💰 Rp {amount:,}\n"
+            f"🧾 <code>{invoice_id}</code>\n\n"
+            "📌 Scan QR di bawah",
             parse_mode="HTML"
         )
 
-        qr_msg = None
-
+        # =========================
+        # QR SINGLE MESSAGE (NO SPAM)
+        # =========================
         if qr_url:
             qr_msg = await call.message.answer_photo(
-                photo=qr_url,
-                caption="📌 QRIS aktif (auto delete 1 menit)"
+                qr_url,
+                caption="📌 QRIS (auto delete 60 detik)"
             )
 
-        # 2. AUTO DELETE QR AFTER 60 DETIK
-        async def delete_qr():
-            await asyncio.sleep(60)
-            try:
-                if qr_msg:
-                    await qr_msg.delete()
-            except:
-                pass
+            # auto delete QR
+            asyncio.create_task(delete_message(qr_msg, 60))
 
-        asyncio.create_task(delete_qr())
-
-        # 3. simpan ke DB
+        # =========================
+        # SAVE DB
+        # =========================
         async with db_pool.acquire() as conn:
             await conn.execute("""
                 INSERT INTO deposits(invoice_id, user_id, amount, status)
                 VALUES($1,$2,$3,'pending')
-            """, inv["invoice_id"], user_id, amount)
+            """, invoice_id, user_id, amount)
 
-        # 4. AUTO CHECK PAYMENT (tanpa tombol)
-        asyncio.create_task(auto_check_payment(inv["invoice_id"], call))
+        # =========================
+        # AUTO CHECK PAYMENT
+        # =========================
+        asyncio.create_task(auto_check_payment(invoice_id, user_id, msg))
 
     except Exception as e:
         print("DEPOSIT ERROR:", repr(e))
         await call.message.edit_text("❌ Gagal membuat invoice")
+
+
 # =========================
-# CHECK PAYMENT
+# DELETE MESSAGE HELPER
+# =========================
+
+async def delete_message(message, delay: int):
+    await asyncio.sleep(delay)
+    try:
+        await message.delete()
+    except:
+        pass
+
+
+# =========================
+# OPTIONAL MANUAL CHECK (BACKUP)
 # =========================
 
 @router.callback_query(F.data.startswith("checkpay:"))
@@ -614,23 +666,14 @@ async def check_payment(call: CallbackQuery):
     if not row:
         return await call.answer("❌ Invoice tidak ditemukan", show_alert=True)
 
-    status = row["status"]
-
-    if status == "success":
+    if row["status"] == "success":
         await call.message.edit_text(
-            "✅ <b>PEMBAYARAN BERHASIL</b>\n\n"
-            f"💰 Rp {row['amount']:,} sudah masuk saldo",
+            "✅ <b>SUDAH DIBAYAR</b>\n\n"
+            f"💰 Rp {row['amount']:,}",
             parse_mode="HTML"
         )
-
-    elif status == "pending":
-        await call.answer("⏳ Pembayaran masih pending", show_alert=True)
-
-    elif status == "failed":
-        await call.answer("❌ Pembayaran gagal", show_alert=True)
-
     else:
-        await call.answer(f"⚠️ Status tidak dikenal: {status}", show_alert=True)
+        await call.answer("⏳ Belum dibayar", show_alert=True)
         
 # =========================
 # UP FILE INIT
