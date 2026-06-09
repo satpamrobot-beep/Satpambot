@@ -340,70 +340,16 @@ async def bayargg_webhook(req: Request):
     return {"ok": True, "msg": "payment processed"}
 
 # =========================
-# START DAN FORCE SUB
+# DASHBOARD BUILDER
 # =========================
 
-@router.message(F.text == "/start")
-async def start(message: Message, bot: Bot):
+async def build_dashboard(user_id: int, username: str):
 
-    user = message.from_user
-    user_id = user.id
-    username = user.username or "No Username"
-
-    # =========================
-    # SAVE USER (POSTGRES)
-    # =========================
-    try:
-        await add_user(
-            user_id,
-            username,
-            user.full_name
-        )
-    except Exception as e:
-        print("ADD USER ERROR:", repr(e))
-
-    # =========================
-    # FORCE SUB CHECK
-    # =========================
-    if FORCE_CHANNEL:
-        try:
-            member = await bot.get_chat_member(FORCE_CHANNEL, user_id)
-
-            if member.status not in ("member", "administrator", "creator"):
-                return await message.answer(
-                    "⚠️ AKSES DITOLAK\n\n"
-                    "Kamu harus join channel dulu sebelum pakai bot.",
-                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                        [
-                            InlineKeyboardButton(
-                                text="📢 Join Channel",
-                                url=FORCE_CHANNEL_LINK
-                            )
-                        ],
-                        [
-                            InlineKeyboardButton(
-                                text="✅ Sudah Join",
-                                callback_data="check_sub"
-                            )
-                        ]
-                    ])
-                )
-
-        except Exception as e:
-            print("FORCE SUB ERROR:", repr(e))
-            return await message.answer("⚠️ Error force sub, coba lagi nanti.")
-
-    # =========================
-    # GET BALANCE (POSTGRES)
-    # =========================
     try:
         balance = await get_balance(user_id)
     except:
         balance = 0
 
-    # =========================
-    # TEXT DASHBOARD
-    # =========================
     text = (
         "🔥 <b>DECODEFILEBOT</b>\n\n"
         f"👤 Username: @{username}\n"
@@ -414,9 +360,6 @@ async def start(message: Message, bot: Bot):
         "━━━━━━━━━━━━━━\n"
     )
 
-    # =========================
-    # KEYBOARD (UPDATED CLEAN)
-    # =========================
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="📤 Upfile", callback_data="upfile"),
@@ -432,56 +375,59 @@ async def start(message: Message, bot: Bot):
         ],
     ])
 
-    # =========================
-    # SEND DASHBOARD
-    # =========================
-    await message.answer(
-        text,
-        reply_markup=keyboard,
-        parse_mode="HTML"
-    )
+    return text, keyboard
+
+
+# =========================
+# START
+# =========================
+
+@router.message(F.text == "/start")
+async def start(message: Message, bot: Bot):
+
+    user = message.from_user
+    user_id = user.id
+    username = user.username or "No Username"
+
+    # save user
+    try:
+        await add_user(user_id, username, user.full_name)
+    except:
+        pass
+
+    # force sub
+    if FORCE_CHANNEL:
+        try:
+            member = await bot.get_chat_member(FORCE_CHANNEL, user_id)
+
+            if member.status not in ("member", "administrator", "creator"):
+                return await message.answer(
+                    "⚠️ AKSES DITOLAK\n\nKamu harus join channel dulu sebelum pakai bot.",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton("📢 Join Channel", url=FORCE_CHANNEL_LINK)],
+                        [InlineKeyboardButton("✅ Sudah Join", callback_data="check_sub")]
+                    ])
+                )
+        except:
+            return await message.answer("⚠️ Error force sub")
+
+    text, keyboard = await build_dashboard(user_id, username)
+
+    await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+
+
+# =========================
+# HOME CALLBACK (SAMA DENGAN START)
+# =========================
 
 @router.callback_query(F.data == "home")
-async def home(call: CallbackQuery, bot: Bot):
+async def home(call: CallbackQuery):
 
     user = call.from_user
     user_id = user.id
     username = user.username or "No Username"
 
-    # ambil saldo
-    try:
-        balance = await get_balance(user_id)
-    except:
-        balance = 0
-
-    text = (
-        "🔥 <b>DECODEFILEBOT</b>\n\n"
-        f"👤 Username: @{username}\n"
-        f"🆔 ID: <code>{user_id}</code>\n"
-        f"💰 Saldo: <b>Rp {balance:,}</b>\n\n"
-        "━━━━━━━━━━━━━━\n"
-        "📌 DASHBOARD MENU\n"
-        "━━━━━━━━━━━━━━\n"
-    )
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="💳 Deposit", callback_data="deposit"),
-            InlineKeyboardButton(text="💸 Withdraw", callback_data="withdraw"),
-        ],
-        [
-            InlineKeyboardButton(text="🔥 Code Trending", callback_data="trending"),
-        ],
-        [
-            InlineKeyboardButton(text="🆕 Code New", callback_data="code_new"),
-        ],
-        [
-            InlineKeyboardButton(text="📊 Statistik", callback_data="statistik"),
-        ],
-        [
-            InlineKeyboardButton(text="❓ Help", callback_data="help"),
-        ],
-    ])
+    text, keyboard = await build_dashboard(user_id, username)
 
     await call.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
     await call.answer()
