@@ -2104,7 +2104,7 @@ async def start_get(call: CallbackQuery):
 # =========================
 # RECEIVE CODE
 # =========================
-@router.message(F.text.regexp(r"^decodefilebot_"))
+@router.message(F.text.regexp(r"^bluebirdbot_"))
 async def receive_code(message: Message):
 
     user_id = message.from_user.id
