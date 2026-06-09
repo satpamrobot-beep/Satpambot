@@ -268,6 +268,18 @@ def verify_signature(data: dict, signature: str):
 
 router = Router()
 
+# ====================
+# HELPERS (DATABASE)
+# ====================
+
+async def get_balance(user_id: int):
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT balance FROM users WHERE user_id=$1",
+            user_id
+        )
+        return row["balance"] if row else 0
+
 # =========================
 # WEBHOOK
 # =========================
@@ -912,7 +924,7 @@ async def wd_input(message: Message):
             user_id
             )
 
-        user_state.pop(user_id, None)
+        user_states.pop(user_id, None)
 
         await message.answer("✅ Data withdraw berhasil disimpan")
 
@@ -993,11 +1005,11 @@ async def wd_confirm(call: CallbackQuery):
 
         await conn.execute("""
             INSERT INTO withdraws(
-                user_id, amount, method, provider,
+                user_id, amount, method,
                 account_name, account_number,
-                status, external_id
+                status
             )
-            VALUES($1,$2,$3,$4,$5,$6,'pending',$7)
+            VALUES($1,$2,$3,$4,$5,'pending')
         """,
         user_id,
         amount,
