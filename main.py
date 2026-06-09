@@ -1362,6 +1362,27 @@ async def done(call: CallbackQuery):
         )
 
     user_states[user_id] = {
+        "mode": "choose_price_type"
+    }
+
+    await call.message.edit_text(
+        "💰 Pilih jenis produk:",
+        reply_markup=price_type_kb()
+    )
+
+    await call.answer()
+
+
+# =========================
+# PRICE PAID
+# =========================
+
+@router.callback_query(F.data == "price_paid")
+async def price_paid(call: CallbackQuery):
+
+    user_id = call.from_user.id
+
+    user_states[user_id] = {
         "mode": "set_price"
     }
 
@@ -1370,6 +1391,36 @@ async def done(call: CallbackQuery):
         "Minimal Rp1.000\n"
         "Maksimal Rp100.000\n\n"
         "Kirim angka saja."
+    )
+
+    await call.answer()
+
+
+# =========================
+# PRICE FREE
+# =========================
+
+@router.callback_query(F.data == "price_free")
+async def price_free(call: CallbackQuery):
+
+    user_id = call.from_user.id
+
+    session = upload_sessions.get(user_id)
+
+    if not session:
+        return await call.answer(
+            "❌ Session upload hilang",
+            show_alert=True
+        )
+
+    session["price"] = 0
+
+    user_states[user_id]["mode"] = "set_media_system"
+
+    await call.message.edit_text(
+        "🆓 Produk Gratis\n\n"
+        "Pilih sistem media:",
+        reply_markup=media_system_kb()
     )
 
     await call.answer()
@@ -1399,14 +1450,9 @@ async def set_price(message: Message):
     if state.get("mode") != "set_price":
         return
 
-    print("LOLOS MODE")
-
     session = upload_sessions.get(user_id)
 
-    print("SESSION =", session)
-
     if not session:
-        print("SESSION HILANG")
         return await message.answer(
             "❌ Session upload hilang.\nSilakan upload ulang."
         )
@@ -1421,7 +1467,6 @@ async def set_price(message: Message):
     print("TEXT CLEAN =", text)
 
     if not text.isdigit():
-        print("BUKAN ANGKA")
         return await message.answer(
             "❌ Harga harus berupa angka.\n\n"
             "Contoh:\n"
@@ -1433,38 +1478,29 @@ async def set_price(message: Message):
     try:
         price = int(text)
     except ValueError:
-        print("GAGAL KONVERSI")
-        return await message.answer("❌ Format harga tidak valid")
-
-    print("PRICE =", price)
+        return await message.answer(
+            "❌ Format harga tidak valid"
+        )
 
     if price < 1000:
         return await message.answer(
-            "❌ Minimal harga Rp 1.000"
+            "❌ Minimal harga Rp1.000"
+        )
+
+    if price > 100000:
+        return await message.answer(
+            "❌ Maksimal harga Rp100.000"
         )
 
     session["price"] = price
 
-    print("PRICE TERSIMPAN")
-
     user_states[user_id]["mode"] = "set_media_system"
 
-    print("MODE DIUBAH")
-
-    try:
-        await message.answer(
-            f"💰 Harga diset Rp {price:,}".replace(",", ".") +
-            "\n\nPilih sistem media:",
-            reply_markup=media_system_kb()
-        )
-
-        print("PESAN TERKIRIM")
-
-    except Exception as e:
-        print("SET_PRICE ERROR:", repr(e))
-        await message.answer(
-            "❌ Gagal menampilkan pilihan media"
-        )
+    await message.answer(
+        f"💰 Harga diset Rp {price:,}".replace(",", ".") +
+        "\n\nPilih sistem media:",
+        reply_markup=media_system_kb()
+    )
 # =========================
 # MEDIA SYSTEM
 # =========================
