@@ -199,7 +199,8 @@ user_states = {}
 last_edit_time = {}
 user_last_action = {}
 force_cache = {}
-
+COOLDOWN_TIME = 5
+pagination_lock = defaultdict(asyncio.Lock)
 # key = (user_id, channel)
 # value = (status, expire_time)
 
