@@ -308,7 +308,7 @@ def verify_signature(data: dict, signature: str):
     if not all(k in data for k in required_fields):
         return False
 
-    raw = f"{data['invoice_id']}:{data['amount']}:{data['status']}:{BAYARGG_SECRET}"
+    raw = raw = f"{str(data['invoice_id'])}:{str(data['amount'])}:{str(data['status']).upper()}:{BAYARGG_SECRET}"
     expected = hashlib.sha256(raw.encode()).hexdigest()
 
     return hmac.compare_digest(expected, signature or "")
@@ -329,75 +329,114 @@ async def get_balance(user_id: int):
             user_id
         )
         return row["balance"] if row else 0
+# =================
+# BAYAR GG WEBHOOK
+# =================
+
+BAYARGG_SECRET = os.getenv("BAYARGG_SECRET", "SECRET_KAMU")
+
+# anti replay cache (sementara in-memory, production sebaiknya Redis)
+processed_invoices = set()
+processed_timestamps = {}  # optional
+
+# =========================
+# SIGNATURE VERIFY (ANTI FAKE)
+# =========================
+def verify_signature(data: dict, signature: str) -> bool:
+    required_fields = ["invoice_id", "amount", "status", "timestamp"]
+
+    if not all(k in data for k in required_fields):
+        return False
+
+    raw = f"{data['invoice_id']}:{data['amount']}:{data['status'].upper()}:{data['timestamp']}:{BAYARGG_SECRET}"
+    expected = hashlib.sha256(raw.encode()).hexdigest()
+
+    return hmac.compare_digest(expected, signature or "")
+
 
 # =========================
 # WEBHOOK
 # =========================
-
 @app.post("/bayargg/webhook")
 async def bayargg_webhook(req: Request):
 
     data = await req.json()
-
-    """
-    expected payload:
-    {
-        "invoice_id": "INV-123-5000",
-        "user_id": 123,
-        "amount": 5000,
-        "status": "PAID",
-        "signature": "xxxxx"
-    }
-    """
 
     invoice_id = data.get("invoice_id")
     user_id = data.get("user_id")
     amount = data.get("amount")
     status = data.get("status")
     signature = data.get("signature")
+    timestamp = data.get("timestamp")
 
     # =========================
-    # VERIFY SIGNATURE
+    # BASIC VALIDATION
+    # =========================
+    if not all([invoice_id, user_id, amount, status, signature, timestamp]):
+        raise HTTPException(status_code=400, detail="Missing fields")
+
+    # =========================
+    # ANTI REPLAY (TIME WINDOW 5 MIN)
+    # =========================
+    now = int(time.time())
+
+    try:
+        ts = int(timestamp)
+    except:
+        raise HTTPException(status_code=400, detail="Invalid timestamp")
+
+    if abs(now - ts) > 300:
+        raise HTTPException(status_code=403, detail="Request expired")
+
+    # =========================
+    # SIGNATURE CHECK
     # =========================
     if not verify_signature(data, signature):
         raise HTTPException(status_code=403, detail="Invalid signature")
 
     # =========================
-    # ONLY PAID
+    # ONLY PAID STATUS
     # =========================
-    if status != "PAID":
-        return {"ok": False, "msg": "not paid"}
+    if status.upper() != "PAID":
+        return {"ok": False, "msg": "ignored status"}
+
+    # =========================
+    # IDEMPOTENT CHECK (ANTI DOUBLE PAYMENT)
+    # =========================
+    if invoice_id in processed_invoices:
+        return {"ok": True, "msg": "already processed (memory)"}
 
     async with db_pool.acquire() as conn:
 
-        # =========================
-        # CHECK DUPLICATE (IDEMPOTENT)
-        # =========================
         existing = await conn.fetchrow(
             "SELECT status FROM deposits WHERE invoice_id=$1",
             invoice_id
         )
 
         if existing and existing["status"] == "success":
-            return {"ok": True, "msg": "already processed"}
+            return {"ok": True, "msg": "already processed (db)"}
 
         # =========================
-        # UPDATE DEPOSIT
+        # ATOMIC UPDATE SAFETY
         # =========================
-        await conn.execute("""
-        UPDATE deposits
-        SET status='success', paid_at=NOW()
-        WHERE invoice_id=$1
+        result = await conn.execute("""
+            UPDATE deposits
+            SET status='success', paid_at=NOW()
+            WHERE invoice_id=$1 AND status != 'success'
         """, invoice_id)
 
-        # =========================
-        # ADD BALANCE USER
-        # =========================
+        # kalau tidak ada row di-update → stop
+        if result == "UPDATE 0":
+            return {"ok": True, "msg": "already processed (race safe)"}
+
         await conn.execute("""
-        UPDATE users
-        SET balance = balance + $1
-        WHERE user_id = $2
+            UPDATE users
+            SET balance = balance + $1
+            WHERE user_id = $2
         """, amount, user_id)
+
+    # mark processed
+    processed_invoices.add(invoice_id)
 
     return {"ok": True, "msg": "payment processed"}
 
@@ -1010,67 +1049,102 @@ async def wd_request(call: CallbackQuery):
 
     user_id = call.from_user.id
 
-    # 🔥 FIX: pakai wd_status yang sudah ada
-    open_status, _, _ = wd_status()
+    # =========================
+    # ANTI DOUBLE CLICK / BLOCK
+    # =========================
+    state = user_states.get(user_id, {})
 
-    if not open_status:
+    if state.get("wd_block"):
         return await call.answer(
-            "🔴 Withdraw sedang TUTUP",
+            "⛔ Withdraw sudah diproses / terkunci",
             show_alert=True
         )
 
-    async with db_pool.acquire() as conn:
+    # lock awal (cegah spam request)
+    state["wd_block"] = True
+    user_states[user_id] = state
 
-        row = await conn.fetchrow("""
-            SELECT balance, wd_method, wd_provider, wd_name, wd_number
-            FROM users
-            WHERE user_id=$1
-        """, user_id)
+    try:
+        # =========================
+        # CHECK STATUS SYSTEM
+        # =========================
+        open_status, _, _ = wd_status()
 
-    if not row:
-        return await call.answer("❌ User tidak ditemukan", show_alert=True)
+        if not open_status:
+            state.pop("wd_block", None)
+            return await call.answer(
+                "🔴 Withdraw sedang TUTUP",
+                show_alert=True
+            )
 
-    # 🔥 safety fallback (biar gak None error)
-    wd_method = row["wd_method"] or ""
-    wd_provider = row["wd_provider"] or "-"
-    wd_name = row["wd_name"] or "-"
-    wd_number = row["wd_number"] or "-"
+        async with db_pool.acquire() as conn:
 
-    if not wd_method:
-        return await call.answer(
-            "⚠️ Silakan atur rekening dulu",
-            show_alert=True
+            row = await conn.fetchrow("""
+                SELECT balance, wd_method, wd_provider, wd_name, wd_number
+                FROM users
+                WHERE user_id=$1
+            """, user_id)
+
+        if not row:
+            state.pop("wd_block", None)
+            return await call.answer(
+                "❌ User tidak ditemukan",
+                show_alert=True
+            )
+
+        wd_method = row["wd_method"] or ""
+        wd_provider = row["wd_provider"] or "-"
+        wd_name = row["wd_name"] or "-"
+        wd_number = row["wd_number"] or "-"
+
+        if not wd_method:
+            state.pop("wd_block", None)
+            return await call.answer(
+                "⚠️ Silakan atur rekening dulu",
+                show_alert=True
+            )
+
+        if row["balance"] < MIN_WITHDRAW:
+            state.pop("wd_block", None)
+            return await call.answer(
+                "❌ Saldo kurang",
+                show_alert=True
+            )
+
+        await call.message.edit_text(
+            "💸 <b>WITHDRAW CONFIRMATION</b>\n\n"
+            f"💰 Saldo: Rp {row['balance']:,}\n"
+            f"🏦 {wd_method} ({wd_provider})\n"
+            f"👤 {wd_name}\n"
+            f"📌 {wd_number}\n\n"
+            "⚠️ Setelah lanjut, saldo akan diproses",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🚀 PROSES WITHDRAW",
+                        callback_data="wd_confirm"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🔙 BACK",
+                        callback_data="withdraw"
+                    )
+                ]
+            ])
         )
 
-    if row["balance"] < MIN_WITHDRAW:
-        return await call.answer(
-            "❌ Saldo kurang",
-            show_alert=True
-        )
+    except Exception as e:
+        print("WD REQUEST ERROR:", repr(e))
 
-    await call.message.edit_text(
-        "💸 <b>WITHDRAW CONFIRMATION</b>\n\n"
-        f"💰 Saldo: Rp {row['balance']:,}\n"
-        f"🏦 {wd_method} ({wd_provider})\n"
-        f"👤 {wd_name}\n"
-        f"📌 {wd_number}\n\n"
-        "⚠️ Setelah lanjut, saldo akan diproses",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🚀 PROSES WITHDRAW",
-                    callback_data="wd_confirm"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🔙 BACK",
-                    callback_data="withdraw"
-                )
-            ]
-        ])
-    )
+        # unlock kalau error
+        state.pop("wd_block", None)
+
+        try:
+            await call.message.edit_text("❌ Terjadi kesalahan sistem")
+        except:
+            pass
 # =========================
 # EXECUTE WITHDRAW
 # =========================
