@@ -41,132 +41,6 @@ from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 router = Router()
 
 # =========================
-# TIMEZONE (WIB)
-# =========================
-WIB = timezone(timedelta(hours=7))
-
-OPEN_HOUR = 9
-CLOSE_HOUR = 20
-
-
-def now_wib():
-    return datetime.now(WIB)
-
-
-# =========================
-# FORMAT TIME HELPER
-# =========================
-def fmt_delta(td: timedelta):
-    total = int(td.total_seconds())
-    h = total // 3600
-    m = (total % 3600) // 60
-    s = total % 60
-    return f"{h}j {m}m {s}d"
-
-
-# =========================
-# WITHDRAW STATUS LOGIC
-# =========================
-def wd_status():
-    now = now_wib()
-    weekday = now.weekday()
-    hour = now.hour
-
-    # WEEKEND
-    if weekday >= 5:
-        next_open = (now + timedelta(days=(7 - weekday))).replace(
-            hour=OPEN_HOUR, minute=0, second=0, microsecond=0
-        )
-        diff = next_open - now
-        return False, next_open, f"⛔ WEEKEND CLOSED\n🕘 Buka lagi dalam {fmt_delta(diff)}"
-
-    # BEFORE OPEN
-    if hour < OPEN_HOUR:
-        next_open = now.replace(hour=OPEN_HOUR, minute=0, second=0, microsecond=0)
-        diff = next_open - now
-        return False, next_open, f"⏳ BELUM BUKA\n🕘 Buka dalam {fmt_delta(diff)}"
-
-    # AFTER CLOSE
-    if hour >= CLOSE_HOUR:
-        next_open = (now + timedelta(days=1)).replace(
-            hour=OPEN_HOUR, minute=0, second=0, microsecond=0
-        )
-        while next_open.weekday() >= 5:
-            next_open += timedelta(days=1)
-
-        diff = next_open - now
-        return False, next_open, f"⛔ TUTUP\n🕘 Buka lagi dalam {fmt_delta(diff)}"
-
-    # OPEN
-    close_time = now.replace(hour=CLOSE_HOUR, minute=0, second=0, microsecond=0)
-    diff = close_time - now
-    return True, close_time, f"🟢 OPEN\n⏳ Tutup dalam {fmt_delta(diff)}"
-
-
-# =========================
-# BUTTON STATUS
-# =========================
-def withdraw_button(is_open: bool):
-    if is_open:
-        text = "🟢 WITHDRAW OPEN"
-        cb = "wd_open"
-    else:
-        text = "🔴 WITHDRAW CLOSED"
-        cb = "wd_closed"
-
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=text, callback_data=cb)],
-            [InlineKeyboardButton(text="💸 REQUEST WITHDRAW", callback_data="wd_request")],
-            [InlineKeyboardButton(text="🔙 KEMBALI", callback_data="home")]
-        ]
-    )
-
-
-# =========================
-# LIVE WITHDRAW PANEL
-# =========================
-async def live_withdraw_panel(message, user_id):
-    last_text = None
-
-    try:
-        for _ in range(120):  # 10 menit (lebih stabil)
-            open_status, next_time, text = wd_status()
-            now = now_wib().strftime("%H:%M:%S")
-
-            panel = (
-                "💸 WITHDRAW CENTER\n\n"
-                f"🕒 WIB: {now}\n\n"
-                f"{text}\n\n"
-                "━━━━━━━━━━━━━━"
-            )
-
-            # hanya edit kalau berubah (hemat flood)
-            if panel != last_text:
-                await message.edit_text(
-                    panel,
-                    reply_markup=withdraw_button(open_status)
-                )
-                last_text = panel
-
-            await asyncio.sleep(5)
-
-    except Exception as e:
-        print("LIVE PANEL ERROR:", repr(e))
-
-
-# =========================
-# CALLBACK TRIGGER LIVE
-# =========================
-@router.callback_query(F.data == "wd_live")
-async def wd_live(call: CallbackQuery):
-    await call.answer()
-
-    asyncio.create_task(
-        live_withdraw_panel(call.message, call.from_user.id)
-    )
-
-# =========================
 # CONFIG
 # =========================
 
@@ -807,13 +681,6 @@ async def check_payment(call: CallbackQuery):
     else:
         await call.answer("⏳ Belum dibayar", show_alert=True)
 
-# =========================
-# WITHDRAW SYSTEM FULL FINAL
-# =========================
-
-import time
-from datetime import datetime
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # =========================
 # LIMIT CONFIG
@@ -844,105 +711,203 @@ CRYPTO = [
 ]
 
 # =========================
-# MAIN PAGE WITHDRAW
+# IMPORT (PASTIKAN ADA)
 # =========================
+from aiogram import Router, F
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from datetime import datetime, timedelta, timezone
+import asyncio
 
+router = Router()
+
+# =========================
+# TIMEZONE (WIB)
+# =========================
+WIB = timezone(timedelta(hours=7))
+
+OPEN_HOUR = 9
+CLOSE_HOUR = 20
+
+MIN_WITHDRAW = 50000
+MAX_WITHDRAW = 500000
+
+def now_wib():
+    return datetime.now(WIB)
+
+
+# =========================
+# FORMAT DELTA
+# =========================
+def fmt_delta(td: timedelta):
+    total = int(td.total_seconds())
+    h = total // 3600
+    m = (total % 3600) // 60
+    s = total % 60
+    return f"{h}j {m}m {s}d"
+
+
+# =========================
+# WITHDRAW STATUS
+# =========================
+def wd_status():
+    now = now_wib()
+    weekday = now.weekday()
+    hour = now.hour
+
+    # weekend
+    if weekday >= 5:
+        next_open = (now + timedelta(days=(7 - weekday))).replace(
+            hour=OPEN_HOUR, minute=0, second=0, microsecond=0
+        )
+        return False, next_open, f"⛔ WEEKEND CLOSED\n🕘 Buka lagi dalam {fmt_delta(next_open - now)}"
+
+    # before open
+    if hour < OPEN_HOUR:
+        next_open = now.replace(hour=OPEN_HOUR, minute=0, second=0, microsecond=0)
+        return False, next_open, f"⏳ BELUM BUKA\n🕘 Buka dalam {fmt_delta(next_open - now)}"
+
+    # after close
+    if hour >= CLOSE_HOUR:
+        next_open = (now + timedelta(days=1)).replace(
+            hour=OPEN_HOUR, minute=0, second=0, microsecond=0
+        )
+        while next_open.weekday() >= 5:
+            next_open += timedelta(days=1)
+
+        return False, next_open, f"⛔ TUTUP\n🕘 Buka lagi dalam {fmt_delta(next_open - now)}"
+
+    close_time = now.replace(hour=CLOSE_HOUR, minute=0, second=0, microsecond=0)
+    return True, close_time, f"🟢 OPEN\n⏳ Tutup dalam {fmt_delta(close_time - now)}"
+
+
+# =========================
+# KEYBOARD
+# =========================
+def withdraw_button(is_open: bool):
+    text = "🟢 WITHDRAW OPEN" if is_open else "🔴 WITHDRAW CLOSED"
+    cb = "wd_open" if is_open else "wd_closed"
+
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=text, callback_data=cb)],
+        [InlineKeyboardButton(text="💸 REQUEST WITHDRAW", callback_data="wd_request")],
+        [InlineKeyboardButton(text="🔙 KEMBALI", callback_data="home")]
+    ])
+
+
+# =========================
+# LIVE PANEL LOCK (BIAR GAK DOUBLE RUN)
+# =========================
+live_tasks = {}
+
+
+async def live_withdraw_panel(message, user_id):
+    last_text = None
+
+    try:
+        for _ in range(120):
+            open_status, _, text_status = wd_status()
+            now = now_wib().strftime("%H:%M:%S")
+
+            panel = (
+                "💸 WITHDRAW CENTER\n\n"
+                f"🕒 WIB: {now}\n\n"
+                f"{text_status}\n\n"
+                "━━━━━━━━━━━━━━"
+            )
+
+            if panel != last_text:
+                await message.edit_text(
+                    panel,
+                    reply_markup=withdraw_button(open_status)
+                )
+                last_text = panel
+
+            await asyncio.sleep(5)
+
+    except Exception as e:
+        print("LIVE PANEL ERROR:", repr(e))
+    finally:
+        live_tasks.pop(user_id, None)
+
+
+# =========================
+# WD LIVE CALLBACK
+# =========================
+@router.callback_query(F.data == "wd_live")
+async def wd_live(call: CallbackQuery):
+    await call.answer()
+
+    user_id = call.from_user.id
+
+    # stop duplicate task
+    task = live_tasks.get(user_id)
+    if task and not task.done():
+        task.cancel()
+
+    live_tasks[user_id] = asyncio.create_task(
+        live_withdraw_panel(call.message, user_id)
+    )
+
+
+# =========================
+# WITHDRAW PAGE
+# =========================
 @router.callback_query(F.data == "withdraw")
 async def withdraw_page(call: CallbackQuery):
 
     user_id = call.from_user.id
 
-    try:
-        async with db_pool.acquire() as conn:
+    async with db_pool.acquire() as conn:
 
-            # auto create user jika belum ada
-            await conn.execute("""
-                INSERT INTO users (user_id, balance)
-                VALUES ($1, 0)
-                ON CONFLICT (user_id) DO NOTHING
-            """, user_id)
+        await conn.execute("""
+            INSERT INTO users (user_id, balance)
+            VALUES ($1, 0)
+            ON CONFLICT (user_id) DO NOTHING
+        """, user_id)
 
-            row = await conn.fetchrow("""
-                SELECT balance, wd_method, wd_provider, wd_name, wd_number
-                FROM users WHERE user_id=$1
-            """, user_id)
+        row = await conn.fetchrow("""
+            SELECT balance, wd_method, wd_provider, wd_name, wd_number
+            FROM users WHERE user_id=$1
+        """, user_id)
 
-        # safety check
-        if not row:
-            return await call.message.edit_text("❌ User tidak ditemukan")
+    if not row:
+        return await call.message.edit_text("❌ User tidak ditemukan")
 
-        balance = row["balance"] or 0
+    balance = row["balance"] or 0
 
-        # =========================
-        # STATUS SYSTEM
-        # =========================
-        open_status, _, _ = wd_status()
-        status_text = "🟢 OPEN" if open_status else "🔴 CLOSED"
+    open_status, _, status_text = wd_status()
+    status_line = "🟢 OPEN" if open_status else "🔴 CLOSED"
 
-        # =========================
-        # WIB TIME
-        # =========================
-        now = now_wib().strftime("%H:%M:%S")
+    now = now_wib().strftime("%H:%M:%S")
 
-        method = row["wd_method"] or "BELUM SET"
-        provider = row["wd_provider"] or "-"
-        name = row["wd_name"] or "-"
-        number = row["wd_number"] or "-"
+    text = (
+        "💸 <b>WITHDRAW CENTER</b>\n\n"
+        f"🕒 WIB: <b>{now}</b>\n"
+        f"⏰ Status Sistem: <b>{status_line}</b>\n\n"
+        "━━━━━━━━━━━━━━\n"
+        f"💰 Saldo Anda: <b>Rp {balance:,}</b>\n\n"
+        "━━━━━━━━━━━━━━\n"
+        "🏦 DATA WITHDRAW\n"
+        f"• Method   : {row['wd_method'] or '-'}\n"
+        f"• Provider : {row['wd_provider'] or '-'}\n"
+        f"• Nama     : {row['wd_name'] or '-'}\n"
+        f"• Nomor    : {row['wd_number'] or '-'}\n"
+        "━━━━━━━━━━━━━━\n\n"
+        f"📌 Minimal Withdraw: Rp {MIN_WITHDRAW:,}\n"
+        f"📌 Maksimal Withdraw: Rp {MAX_WITHDRAW:,}\n\n"
+        "🕘 Jadwal:\n"
+        "• Senin - Jumat: 09:00 - 20:00\n"
+        "• Sabtu - Minggu: TUTUP"
+    )
 
-        # =========================
-        # TEXT UI
-        # =========================
-        text = (
-            "💸 <b>WITHDRAW CENTER</b>\n\n"
-            f"🕒 WIB: <b>{now}</b>\n"
-            f"⏰ Status Sistem: <b>{status_text}</b>\n\n"
-            "━━━━━━━━━━━━━━\n"
-            f"💰 Saldo Anda: <b>Rp {balance:,}</b>\n\n"
-            "━━━━━━━━━━━━━━\n"
-            "🏦 <b>DATA WITHDRAW</b>\n"
-            f"• Method   : {method}\n"
-            f"• Provider : {provider}\n"
-            f"• Nama     : {name}\n"
-            f"• Nomor    : {number}\n"
-            "━━━━━━━━━━━━━━\n\n"
-            f"📌 Minimal Withdraw: Rp {MIN_WITHDRAW:,}\n"
-            f"📌 Maksimal Withdraw: Rp {MAX_WITHDRAW:,}\n\n"
-            "🕘 Jadwal:\n"
-            "• Senin - Jumat: 09:00 - 20:00\n"
-            "• Sabtu - Minggu: TUTUP"
-        )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton("🔄 LIVE STATUS", callback_data="wd_live")],
+        [InlineKeyboardButton("💸 REQUEST WITHDRAW", callback_data="wd_request")],
+        [InlineKeyboardButton("⚙️ ATUR BANK / EWALLET", callback_data="wd_settings")],
+        [InlineKeyboardButton("🔙 KEMBALI", callback_data="home")]
+    ])
 
-        # =========================
-        # KEYBOARD
-        # =========================
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text="🔄 LIVE STATUS",
-                callback_data="wd_live"
-            )],
-            [InlineKeyboardButton(
-                text="💸 REQUEST WITHDRAW",
-                callback_data="wd_request"
-            )],
-            [InlineKeyboardButton(
-                text="⚙️ ATUR BANK / EWALLET",
-                callback_data="wd_settings"
-            )],
-            [InlineKeyboardButton(
-                text="🔙 KEMBALI",
-                callback_data="home"
-            )]
-        ])
-
-        await call.message.edit_text(
-            text,
-            parse_mode="HTML",
-            reply_markup=kb
-        )
-
-    except Exception as e:
-        print("WITHDRAW ERROR:", repr(e))
-        await call.message.edit_text("❌ Gagal load withdraw")
+    await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
 
 # =========================
 # STEP 1 - PILIH JENIS
