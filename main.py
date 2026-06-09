@@ -34,7 +34,11 @@ from aiogram.types import (
 )
 
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
+# =========================
+# ROUTER
+# =========================
 
+router = Router()
 
 # =========================
 # TIMEZONE (WIB)
@@ -371,12 +375,6 @@ async def safe_send(func, *args, **kwargs):
         except Exception as e:
             print("ERROR:", e)
             await asyncio.sleep(1)
-
-# =========================
-# ROUTER
-# =========================
-
-router = Router()
 
 # ====================
 # HELPERS (DATABASE)
