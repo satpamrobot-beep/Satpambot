@@ -155,7 +155,7 @@ async def live_withdraw_panel(message, user_id):
 # =========================
 # CALLBACK TRIGGER LIVE
 # =========================
-@dp.callback_query(F.data == "wd_live")
+@router.callback_query(F.data == "wd_live")
 async def wd_live(call: CallbackQuery):
     await call.answer()
 
