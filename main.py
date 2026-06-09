@@ -1045,7 +1045,7 @@ def upload_kb():
     )
 
 
-@router.message(F.text == "📤 Upfile")
+@router.message(F.text == "Upfile")
 async def up_file(message: Message):
 
     user_id = message.from_user.id
