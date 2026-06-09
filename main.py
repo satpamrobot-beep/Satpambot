@@ -14,7 +14,6 @@ import hashlib
 import hmac
 import uvicorn
 import httpx
-from aiogram import Router
 
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, Request, HTTPException
@@ -1128,21 +1127,18 @@ async def wd_input(message: Message):
 async def wd_request(call: CallbackQuery):
 
     user_id = call.from_user.id
+    state = user_states.setdefault(user_id, {})
 
     # =========================
-    # ANTI DOUBLE CLICK / BLOCK
+    # GLOBAL USER LOCK (ANTI DOUBLE CLICK)
     # =========================
-    state = user_states.get(user_id, {})
-
     if state.get("wd_block"):
         return await call.answer(
             "⛔ Withdraw sudah diproses / terkunci",
             show_alert=True
         )
 
-    # lock awal (cegah spam request)
-    state["wd_block"] = True
-    user_states[user_id] = state
+    state["wd_block"] = True  # LOCK DARI AWAL
 
     try:
         # =========================
@@ -1158,7 +1154,6 @@ async def wd_request(call: CallbackQuery):
             )
 
         async with db_pool.acquire() as conn:
-
             row = await conn.fetchrow("""
                 SELECT balance, wd_method, wd_provider, wd_name, wd_number
                 FROM users
@@ -1172,12 +1167,7 @@ async def wd_request(call: CallbackQuery):
                 show_alert=True
             )
 
-        wd_method = row["wd_method"] or ""
-        wd_provider = row["wd_provider"] or "-"
-        wd_name = row["wd_name"] or "-"
-        wd_number = row["wd_number"] or "-"
-
-        if not wd_method:
+        if not row["wd_method"]:
             state.pop("wd_block", None)
             return await call.answer(
                 "⚠️ Silakan atur rekening dulu",
@@ -1191,12 +1181,15 @@ async def wd_request(call: CallbackQuery):
                 show_alert=True
             )
 
+        # =========================
+        # CONFIRM UI
+        # =========================
         await call.message.edit_text(
             "💸 <b>WITHDRAW CONFIRMATION</b>\n\n"
             f"💰 Saldo: Rp {row['balance']:,}\n"
-            f"🏦 {wd_method} ({wd_provider})\n"
-            f"👤 {wd_name}\n"
-            f"📌 {wd_number}\n\n"
+            f"🏦 {row['wd_method']} ({row['wd_provider']})\n"
+            f"👤 {row['wd_name']}\n"
+            f"📌 {row['wd_number']}\n\n"
             "⚠️ Setelah lanjut, saldo akan diproses",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -1218,7 +1211,9 @@ async def wd_request(call: CallbackQuery):
     except Exception as e:
         print("WD REQUEST ERROR:", repr(e))
 
-        # unlock kalau error
+        # =========================
+        # ALWAYS UNLOCK SAFETY
+        # =========================
         state.pop("wd_block", None)
 
         try:
