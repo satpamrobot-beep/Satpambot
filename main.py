@@ -281,6 +281,24 @@ async def safe_send(func, *args, **kwargs):
 
     return None
 
+# =========================
+# PAYMENT ACCESS CHECK
+# =========================
+
+paid_users = defaultdict(set)  # WAJIB ada di GLOBAL
+
+def has_access(user_id, code, free_codes=None):
+    if free_codes is None:
+        free_codes = set()
+
+    if code in free_codes:
+        return True
+
+    if user_id in paid_users.get(code, set()):
+        return True
+
+    return False
+
 # ====================
 # HELPERS (DATABASE)
 # ====================
@@ -1833,14 +1851,21 @@ async def start_get(call: CallbackQuery):
 # =========================
 @router.message(F.text.regexp(r"^bluebirdbot_"))
 async def receive_code(message: Message):
+
     user_id = message.from_user.id
     state = user_states.get(user_id)
+
     if not state or state.get("mode") != "getfile":
         return
+
     if is_cooldown(user_id):
         return await message.answer("⏳ Jangan spam")
 
     code = message.text.strip()
+
+    # =========================
+    # LOAD DATA DARI DB
+    # =========================
     async with db_pool.acquire() as conn:
         rows = await conn.fetch("""
             SELECT file_id, file_type, is_paid, price
@@ -1855,20 +1880,36 @@ async def receive_code(message: Message):
         is_paid = any(r["is_paid"] for r in rows)
         price = rows[0]["price"] if is_paid else 0
 
-        # kalau berbayar
-        if is_paid:
-            paid = await check_paid(conn, user_id, code)
-            if not paid:
-                kb = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text=f"💳 PAY NOW ({price})", callback_data=f"pay:{code}")]
-                ])
-                return await message.answer(
-                    f"🔒 CODE BERBAYAR\n💰 Harga: {price}\nKlik untuk bayar dulu.",
-                    reply_markup=kb
-                )
+        # =========================
+        # CEK AKSES (FREE / PAID)
+        # =========================
+        if not has_access(user_id, code):
 
-    # free atau sudah bayar
-    data = [{"file_id": r["file_id"], "file_type": normalize_type(r["file_type"])} for r in rows]
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=f"💳 PAY NOW ({price})",
+                        callback_data=f"pay:{code}"
+                    )
+                ]
+            ])
+
+            return await message.answer(
+                f"🔒 CODE BERBAYAR\n💰 Harga: {price}\n\nSilahkan bayar dulu untuk akses file ini.",
+                reply_markup=kb
+            )
+
+    # =========================
+    # SET DATA (SUDAH BISA AKSES)
+    # =========================
+    data = [
+        {
+            "file_id": r["file_id"],
+            "file_type": normalize_type(r["file_type"])
+        }
+        for r in rows
+    ]
+
     user_states[user_id] = {
         "mode": "view",
         "code": code,
@@ -1877,8 +1918,11 @@ async def receive_code(message: Message):
         "data": data,
         "last_panel_msg": None
     }
+
     page_history[user_id] = set()
+
     await message.answer(f"📦 Total file: {len(data)}")
+
     await render_page(user_id, message.bot, message.chat.id)
 
 # =========================
@@ -1900,6 +1944,48 @@ async def pay(call: CallbackQuery):
         reply_markup=kb,
         parse_mode="Markdown"
     )
+
+@router.callback_query(F.data.startswith("confirm:"))
+async def confirm(call: CallbackQuery):
+
+    user_id = call.from_user.id
+    code = call.data.split(":")[1]
+
+    # unlock user untuk code ini
+    paid_users[code].add(user_id)
+
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT file_id, file_type
+            FROM medias
+            WHERE code=$1
+            ORDER BY id ASC
+        """, code)
+
+    data = [
+        {
+            "file_id": r["file_id"],
+            "file_type": normalize_type(r["file_type"])
+        }
+        for r in rows
+    ]
+
+    user_states[user_id] = {
+        "mode": "view",
+        "code": code,
+        "page": 0,
+        "page_size": 10,
+        "data": data,
+        "last_panel_msg": None
+    }
+
+    page_history[user_id] = set()
+
+    await call.message.edit_text("✅ PAYMENT SUCCESS\n📦 Loading media...")
+
+    await render_page(user_id, call.bot, call.message.chat.id)
+
+    await call.answer("Unlocked ✅")
 
 # =========================
 # CHECK PAYMENT
