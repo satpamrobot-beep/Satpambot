@@ -1349,7 +1349,23 @@ def price_type_kb():
             ]
         ]
     )
-
+def media_system_kb():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Share File",
+                    callback_data="media_share"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="❌ No Share",
+                    callback_data="media_noshare"
+                )
+            ]
+        ]
+    )
 
 # =========================
 # UPLOAD DONE
