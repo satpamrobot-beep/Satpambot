@@ -204,15 +204,23 @@ force_cache = {}
 # value = (status, expire_time)
 
 # =========================
-# ANTI BANNED SYSTEM 🔥
+# ANTI BANNED SYSTEM 🔥 (FIXED)
 # =========================
 
 GLOBAL_DELAY = 0.08
-last_global_send = 0
-
 USER_DELAY = 1.5
 
-def user_limit(user_id):
+last_global_send = 0
+user_last_action = {}
+
+# optional lock biar aman di concurrency tinggi
+global_lock = asyncio.Lock()
+
+
+def user_limit(user_id: int) -> bool:
+    """
+    Anti spam per user
+    """
     now = time.time()
     last = user_last_action.get(user_id, 0)
 
@@ -222,33 +230,55 @@ def user_limit(user_id):
     user_last_action[user_id] = now
     return True
 
+
 async def global_throttle():
+    """
+    Anti flood global Telegram API (SAFE + LOCKED)
+    """
     global last_global_send
 
-    now = time.time()
-    diff = now - last_global_send
+    async with global_lock:
+        now = time.time()
+        diff = now - last_global_send
 
-    if diff < GLOBAL_DELAY:
-        await asyncio.sleep(GLOBAL_DELAY - diff)
+        if diff < GLOBAL_DELAY:
+            await asyncio.sleep(GLOBAL_DELAY - diff)
 
-    last_global_send = time.time()
+        last_global_send = time.time()
+
 
 async def safe_send(func, *args, **kwargs):
-    for _ in range(5):
+    """
+    Safe wrapper untuk semua send/edit/delete Telegram API
+    + retry + flood handling + timeout safety
+    """
+    for attempt in range(5):
         try:
             await global_throttle()
-            return await func(*args, **kwargs)
+
+            return await asyncio.wait_for(
+                func(*args, **kwargs),
+                timeout=20
+            )
 
         except TelegramRetryAfter as e:
-            await asyncio.sleep(e.retry_after + 1)
+            wait = e.retry_after + 1
+            print(f"[FLOODWAIT] {wait}s")
+            await asyncio.sleep(wait)
 
         except TelegramBadRequest as e:
             print("BAD REQUEST:", e)
-            return
+            return None
+
+        except asyncio.TimeoutError:
+            print("TIMEOUT ERROR")
+            await asyncio.sleep(1 + attempt)
 
         except Exception as e:
-            print("ERROR:", e)
-            await asyncio.sleep(1)
+            print("ERROR:", repr(e))
+            await asyncio.sleep(1 + attempt)
+
+    return None
 
 # ====================
 # HELPERS (DATABASE)
@@ -261,15 +291,18 @@ async def get_balance(user_id: int):
             user_id
         )
         return row["balance"] if row else 0
+
+
 # =================
-# BAYAR GG WEBHOOK
+# BAYAR.GG CONFIG
 # =================
 
 BAYARGG_SECRET = os.getenv("BAYARGG_SECRET", "SECRET_KAMU")
 
-# anti replay cache (sementara in-memory, production sebaiknya Redis)
+# anti replay cache
 processed_invoices = set()
-processed_timestamps = {}  # optional
+processed_lock = asyncio.Lock()
+
 
 # =========================
 # SIGNATURE VERIFY (ANTI FAKE)
@@ -280,9 +313,15 @@ def verify_signature(data: dict, signature: str) -> bool:
     if not all(k in data for k in required_fields):
         return False
 
-    raw = f"{data['invoice_id']}:{data['amount']}:{data['status'].upper()}:{data['timestamp']}:{BAYARGG_SECRET}"
-    expected = hashlib.sha256(raw.encode()).hexdigest()
+    raw = (
+        f"{data['invoice_id']}:"
+        f"{data['amount']}:"
+        f"{data['status'].upper()}:"
+        f"{data['timestamp']}:"
+        f"{BAYARGG_SECRET}"
+    )
 
+    expected = hashlib.sha256(raw.encode()).hexdigest()
     return hmac.compare_digest(expected, signature or "")
 
 
@@ -308,15 +347,14 @@ async def bayargg_webhook(req: Request):
         raise HTTPException(status_code=400, detail="Missing fields")
 
     # =========================
-    # ANTI REPLAY (TIME WINDOW 5 MIN)
+    # TIME VALIDATION (5 MIN WINDOW)
     # =========================
-    now = int(time.time())
-
     try:
         ts = int(timestamp)
-    except:
+    except ValueError:
         raise HTTPException(status_code=400, detail="Invalid timestamp")
 
+    now = int(time.time())
     if abs(now - ts) > 300:
         raise HTTPException(status_code=403, detail="Request expired")
 
@@ -333,10 +371,13 @@ async def bayargg_webhook(req: Request):
         return {"ok": False, "msg": "ignored status"}
 
     # =========================
-    # IDEMPOTENT CHECK (ANTI DOUBLE PAYMENT)
+    # IDEMPOTENCY CHECK (ANTI DOUBLE PAY)
     # =========================
-    if invoice_id in processed_invoices:
-        return {"ok": True, "msg": "already processed (memory)"}
+    async with processed_lock:
+        if invoice_id in processed_invoices:
+            return {"ok": True, "msg": "already processed (memory)"}
+
+        processed_invoices.add(invoice_id)
 
     async with db_pool.acquire() as conn:
 
@@ -349,7 +390,7 @@ async def bayargg_webhook(req: Request):
             return {"ok": True, "msg": "already processed (db)"}
 
         # =========================
-        # ATOMIC UPDATE SAFETY
+        # UPDATE DEPOSIT (ATOMIC)
         # =========================
         result = await conn.execute("""
             UPDATE deposits
@@ -357,7 +398,6 @@ async def bayargg_webhook(req: Request):
             WHERE invoice_id=$1 AND status != 'success'
         """, invoice_id)
 
-        # kalau tidak ada row di-update → stop
         if result == "UPDATE 0":
             return {"ok": True, "msg": "already processed (race safe)"}
 
@@ -367,27 +407,66 @@ async def bayargg_webhook(req: Request):
             WHERE user_id = $2
         """, amount, user_id)
 
-    # mark processed
-    processed_invoices.add(invoice_id)
-
     return {"ok": True, "msg": "payment processed"}
 
 # =========================
-# DASHBOARD BUILDER
+# CACHE USD RATE (biar gak spam API)
 # =========================
+USD_RATE_CACHE = {
+    "rate": 0.0000625,
+    "last_update": 0
+}
 
+USD_CACHE_TTL = 600  # 10 menit
+
+
+# =========================
+# GET USD RATE (OPTIMIZED)
+# =========================
+async def get_usd_rate():
+    now = time.time()
+
+    # pakai cache kalau masih fresh
+    if now - USD_RATE_CACHE["last_update"] < USD_CACHE_TTL:
+        return USD_RATE_CACHE["rate"]
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                "https://api.exchangerate.host/latest?base=IDR&symbols=USD"
+            )
+            data = r.json()
+            rate = data["rates"]["USD"]
+
+            USD_RATE_CACHE["rate"] = rate
+            USD_RATE_CACHE["last_update"] = now
+
+            return rate
+
+    except Exception as e:
+        print("USD RATE ERROR:", repr(e))
+        return USD_RATE_CACHE["rate"]  # fallback cache
+
+
+# =========================
+# DASHBOARD BUILDER (FIXED)
+# =========================
 async def build_dashboard(user_id: int, username: str):
 
     try:
-        balance = await get_balance(user_id)
+        balance_rp = await get_balance(user_id)
     except:
-        balance = 0
+        balance_rp = 0
+
+    kurs = await get_usd_rate()
+
+    balance_usd = balance_rp * kurs
 
     text = (
         "🔥 <b>DECODEFILEBOT</b>\n\n"
         f"👤 Username: @{username}\n"
         f"🆔 ID: <code>{user_id}</code>\n"
-        f"💰 Saldo: <b>Rp {balance:,}</b>\n\n"
+        f"💰 Saldo: <b>Rp {balance_rp:,} / $ {balance_usd:,.4f}</b>\n\n"
         "━━━━━━━━━━━━━━\n"
         "📌 DASHBOARD MENU\n"
         "━━━━━━━━━━━━━━\n"
@@ -414,21 +493,19 @@ async def build_dashboard(user_id: int, username: str):
 # =========================
 # START
 # =========================
-
 @router.message(F.text == "/start")
 async def start(message: Message, bot: Bot):
 
     user = message.from_user
     user_id = user.id
-    username = user.username or "No Username"
+    username = user.username or "NoUsername"
 
-    # save user
     try:
         await add_user(user_id, username, user.full_name)
-    except:
-        pass
+    except Exception as e:
+        print("ADD USER ERROR:", repr(e))
 
-    # force sub
+    # force join
     if FORCE_CHANNEL:
         try:
             member = await bot.get_chat_member(FORCE_CHANNEL, user_id)
@@ -442,7 +519,7 @@ async def start(message: Message, bot: Bot):
                     ])
                 )
         except Exception as e:
-            print("FORCE SUB EROR:", repr(e))
+            print("FORCE SUB ERROR:", repr(e))
 
     text, keyboard = await build_dashboard(user_id, username)
 
@@ -450,20 +527,41 @@ async def start(message: Message, bot: Bot):
 
 
 # =========================
-# HOME CALLBACK (SAMA DENGAN START)
+# HOME CALLBACK
 # =========================
-
 @router.callback_query(F.data == "home")
 async def home(call: CallbackQuery):
 
     user = call.from_user
     user_id = user.id
-    username = user.username or "No Username"
+    username = user.username or "NoUsername"
 
-    text, keyboard = await build_dashboard(user_id, username)
+    try:
+        text, keyboard = await build_dashboard(user_id, username)
 
-    await call.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
+        await call.message.edit_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
+
+    except Exception as e:
+        print("EDIT ERROR:", repr(e))
+
     await call.answer()
+
+# =========================
+# CONFIG
+# =========================
+
+IDR_TO_USD = 16000
+
+def idr_to_usd(idr: int) -> float:
+    try:
+        return round(idr / IDR_TO_USD, 2)
+    except:
+        return 0.0
+
 
 # =========================
 # DEPOSIT KEYBOARD
@@ -488,29 +586,14 @@ def deposit_kb():
 
 
 # =========================
-# MENU DEPOSIT
+# ACTIVE INVOICE CACHE (SAFE LOCK)
 # =========================
-
-@router.callback_query(F.data == "deposit")
-async def deposit_menu(call: CallbackQuery):
-    await call.message.edit_text(
-        "💳 <b>DEPOSIT</b>\n\nPilih nominal:",
-        parse_mode="HTML",
-        reply_markup=deposit_kb()
-    )
-    await call.answer()
-
-
-# =========================
-# ANTI DOUBLE INVOICE CACHE
-# =========================
-ACTIVE_INVOICE = {}  # user_id -> invoice_id
+ACTIVE_INVOICE: dict[int, str] = {}
 
 
 # =========================
 # CREATE INVOICE
 # =========================
-
 async def create_bayargg_invoice(user_id: int, amount: int):
 
     payload = {
@@ -532,23 +615,28 @@ async def create_bayargg_invoice(user_id: int, amount: int):
     res = r.json()
     data = res.get("data") or {}
 
-    return {
-        "invoice_id": data.get("invoice_id"),
-        "payment_url": data.get("payment_url"),
-        "qr_url": data.get("qris_static_image_url")
-    }
+    return data.get("invoice_id"), data.get("qris_static_image_url")
 
 
 # =========================
-# AUTO CHECK PAYMENT LOOP
+# MENU DEPOSIT
 # =========================
+@router.callback_query(F.data == "deposit")
+async def deposit_menu(call: CallbackQuery):
+    await call.message.edit_text(
+        "💳 <b>DEPOSIT</b>\n\nPilih nominal:",
+        parse_mode="HTML",
+        reply_markup=deposit_kb()
+    )
+    await call.answer()
 
-async def auto_check_payment(invoice_id: str, user_id: int, message):
-    """
-    auto detect payment + auto update saldo
-    """
 
-    for _ in range(30):  # ± 5 menit (30x10s)
+# =========================
+# AUTO CHECK PAYMENT
+# =========================
+async def auto_check_payment(invoice_id: str, user_id: int, msg):
+
+    for _ in range(30):
         await asyncio.sleep(10)
 
         async with db_pool.acquire() as conn:
@@ -558,28 +646,29 @@ async def auto_check_payment(invoice_id: str, user_id: int, message):
                 WHERE invoice_id=$1
             """, invoice_id)
 
-            if not row:
-                return
+        if not row:
+            ACTIVE_INVOICE.pop(user_id, None)
+            return
 
-            if row["status"] == "success":
-                await message.edit_text(
-                    "✅ <b>PEMBAYARAN BERHASIL</b>\n\n"
-                    f"💰 Rp {row['amount']:,} sudah masuk saldo",
-                    parse_mode="HTML"
-                )
-                ACTIVE_INVOICE.pop(user_id, None)
-                return
+        if row["status"] == "success":
+            await msg.edit_text(
+                "✅ <b>PEMBAYARAN BERHASIL</b>\n\n"
+                f"💰 Rp {row['amount']:,}\n"
+                f"💵 USD ± ${idr_to_usd(row['amount'])}",
+                parse_mode="HTML"
+            )
+            ACTIVE_INVOICE.pop(user_id, None)
+            return
 
-            if row["status"] == "expired":
-                await message.edit_text("⛔ Invoice expired")
-                ACTIVE_INVOICE.pop(user_id, None)
-                return
+        if row["status"] == "expired":
+            await msg.edit_text("⛔ Invoice expired")
+            ACTIVE_INVOICE.pop(user_id, None)
+            return
 
 
 # =========================
 # HANDLE DEPOSIT
 # =========================
-
 @router.callback_query(F.data.startswith("dep:"))
 async def deposit_nominal(call: CallbackQuery):
 
@@ -588,63 +677,51 @@ async def deposit_nominal(call: CallbackQuery):
 
     await call.answer("⏳ membuat invoice...")
 
-    # =========================
-    # ANTI DOUBLE INVOICE
-    # =========================
+    # anti double invoice (SAFE)
     if user_id in ACTIVE_INVOICE:
-        return await call.message.answer("⚠️ Kamu masih punya invoice aktif")
+        return await call.answer("⚠️ Kamu masih punya invoice aktif", show_alert=True)
 
     try:
-        inv = await create_bayargg_invoice(user_id, amount)
+        invoice_id, qr_url = await create_bayargg_invoice(user_id, amount)
 
-        invoice_id = inv["invoice_id"]
-        qr_url = inv.get("qr_url")
+        if not invoice_id:
+            return await call.message.edit_text("❌ Gagal membuat invoice")
 
         ACTIVE_INVOICE[user_id] = invoice_id
 
         msg = await call.message.edit_text(
             "💳 <b>INVOICE CREATED</b>\n\n"
             f"💰 Rp {amount:,}\n"
+            f"💵 USD ± ${idr_to_usd(amount)}\n\n"
             f"🧾 <code>{invoice_id}</code>\n\n"
             "📌 Scan QR di bawah",
             parse_mode="HTML"
         )
 
-        # =========================
-        # QR SINGLE MESSAGE (NO SPAM)
-        # =========================
         if qr_url:
             qr_msg = await call.message.answer_photo(
                 qr_url,
                 caption="📌 QRIS (auto delete 60 detik)"
             )
-
-            # auto delete QR
             asyncio.create_task(delete_message(qr_msg, 60))
 
-        # =========================
-        # SAVE DB
-        # =========================
         async with db_pool.acquire() as conn:
             await conn.execute("""
                 INSERT INTO deposits(invoice_id, user_id, amount, status)
                 VALUES($1,$2,$3,'pending')
             """, invoice_id, user_id, amount)
 
-        # =========================
-        # AUTO CHECK PAYMENT
-        # =========================
         asyncio.create_task(auto_check_payment(invoice_id, user_id, msg))
 
     except Exception as e:
         print("DEPOSIT ERROR:", repr(e))
+        ACTIVE_INVOICE.pop(user_id, None)
         await call.message.edit_text("❌ Gagal membuat invoice")
 
 
 # =========================
-# DELETE MESSAGE HELPER
+# DELETE HELPER
 # =========================
-
 async def delete_message(message, delay: int):
     await asyncio.sleep(delay)
     try:
@@ -654,9 +731,8 @@ async def delete_message(message, delay: int):
 
 
 # =========================
-# OPTIONAL MANUAL CHECK (BACKUP)
+# MANUAL CHECK
 # =========================
-
 @router.callback_query(F.data.startswith("checkpay:"))
 async def check_payment(call: CallbackQuery):
 
@@ -675,7 +751,8 @@ async def check_payment(call: CallbackQuery):
     if row["status"] == "success":
         await call.message.edit_text(
             "✅ <b>SUDAH DIBAYAR</b>\n\n"
-            f"💰 Rp {row['amount']:,}",
+            f"💰 Rp {row['amount']:,}\n"
+            f"💵 USD ± ${idr_to_usd(row['amount'])}",
             parse_mode="HTML"
         )
     else:
@@ -711,16 +788,6 @@ CRYPTO = [
 ]
 
 # =========================
-# IMPORT (PASTIKAN ADA)
-# =========================
-from aiogram import Router, F
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
-from datetime import datetime, timedelta, timezone
-import asyncio
-
-router = Router()
-
-# =========================
 # TIMEZONE (WIB)
 # =========================
 WIB = timezone(timedelta(hours=7))
@@ -728,8 +795,6 @@ WIB = timezone(timedelta(hours=7))
 OPEN_HOUR = 9
 CLOSE_HOUR = 20
 
-MIN_WITHDRAW = 50000
-MAX_WITHDRAW = 500000
 
 def now_wib():
     return datetime.now(WIB)
@@ -754,19 +819,16 @@ def wd_status():
     weekday = now.weekday()
     hour = now.hour
 
-    # weekend
     if weekday >= 5:
         next_open = (now + timedelta(days=(7 - weekday))).replace(
             hour=OPEN_HOUR, minute=0, second=0, microsecond=0
         )
         return False, next_open, f"⛔ WEEKEND CLOSED\n🕘 Buka lagi dalam {fmt_delta(next_open - now)}"
 
-    # before open
     if hour < OPEN_HOUR:
         next_open = now.replace(hour=OPEN_HOUR, minute=0, second=0, microsecond=0)
         return False, next_open, f"⏳ BELUM BUKA\n🕘 Buka dalam {fmt_delta(next_open - now)}"
 
-    # after close
     if hour >= CLOSE_HOUR:
         next_open = (now + timedelta(days=1)).replace(
             hour=OPEN_HOUR, minute=0, second=0, microsecond=0
@@ -784,22 +846,28 @@ def wd_status():
 # KEYBOARD
 # =========================
 def withdraw_button(is_open: bool):
-    text = "🟢 WITHDRAW OPEN" if is_open else "🔴 WITHDRAW CLOSED"
-    cb = "wd_open" if is_open else "wd_closed"
-
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=text, callback_data=cb)],
-        [InlineKeyboardButton(text="💸 REQUEST WITHDRAW", callback_data="wd_request")],
-        [InlineKeyboardButton(text="🔙 KEMBALI", callback_data="home")]
+        [
+            InlineKeyboardButton(
+                text="🟢 WITHDRAW OPEN" if is_open else "🔴 WITHDRAW CLOSED",
+                callback_data="wd_open" if is_open else "wd_closed"
+            )
+        ],
+        [InlineKeyboardButton("💸 REQUEST WITHDRAW", callback_data="wd_request")],
+        [InlineKeyboardButton("🔙 KEMBALI", callback_data="home")]
     ])
 
 
 # =========================
-# LIVE PANEL LOCK (BIAR GAK DOUBLE RUN)
+# STATE STORAGE
 # =========================
+user_states = {}
 live_tasks = {}
 
 
+# =========================
+# LIVE PANEL
+# =========================
 async def live_withdraw_panel(message, user_id):
     last_text = None
 
@@ -816,30 +884,24 @@ async def live_withdraw_panel(message, user_id):
             )
 
             if panel != last_text:
-                await message.edit_text(
-                    panel,
-                    reply_markup=withdraw_button(open_status)
-                )
+                await message.edit_text(panel, reply_markup=withdraw_button(open_status))
                 last_text = panel
 
             await asyncio.sleep(5)
 
     except Exception as e:
         print("LIVE PANEL ERROR:", repr(e))
+
     finally:
         live_tasks.pop(user_id, None)
 
 
-# =========================
-# WD LIVE CALLBACK
-# =========================
 @router.callback_query(F.data == "wd_live")
 async def wd_live(call: CallbackQuery):
     await call.answer()
 
     user_id = call.from_user.id
 
-    # stop duplicate task
     task = live_tasks.get(user_id)
     if task and not task.done():
         task.cancel()
@@ -847,6 +909,16 @@ async def wd_live(call: CallbackQuery):
     live_tasks[user_id] = asyncio.create_task(
         live_withdraw_panel(call.message, user_id)
     )
+
+
+# =========================
+# CANCEL HANDLER (FIX MISSING)
+# =========================
+@router.callback_query(F.data == "wd_cancel")
+async def wd_cancel(call: CallbackQuery):
+    user_states.pop(call.from_user.id, None)
+    await call.message.edit_text("❌ Withdraw dibatalkan")
+    await call.answer()
 
 
 # =========================
@@ -858,7 +930,6 @@ async def withdraw_page(call: CallbackQuery):
     user_id = call.from_user.id
 
     async with db_pool.acquire() as conn:
-
         await conn.execute("""
             INSERT INTO users (user_id, balance)
             VALUES ($1, 0)
@@ -873,377 +944,175 @@ async def withdraw_page(call: CallbackQuery):
     if not row:
         return await call.message.edit_text("❌ User tidak ditemukan")
 
-    balance = row["balance"] or 0
-
-    open_status, _, status_text = wd_status()
-    status_line = "🟢 OPEN" if open_status else "🔴 CLOSED"
-
-    now = now_wib().strftime("%H:%M:%S")
+    open_status, _, _ = wd_status()
 
     text = (
         "💸 <b>WITHDRAW CENTER</b>\n\n"
-        f"🕒 WIB: <b>{now}</b>\n"
-        f"⏰ Status Sistem: <b>{status_line}</b>\n\n"
-        "━━━━━━━━━━━━━━\n"
-        f"💰 Saldo Anda: <b>Rp {balance:,}</b>\n\n"
-        "━━━━━━━━━━━━━━\n"
-        "🏦 DATA WITHDRAW\n"
-        f"• Method   : {row['wd_method'] or '-'}\n"
-        f"• Provider : {row['wd_provider'] or '-'}\n"
-        f"• Nama     : {row['wd_name'] or '-'}\n"
-        f"• Nomor    : {row['wd_number'] or '-'}\n"
-        "━━━━━━━━━━━━━━\n\n"
-        f"📌 Minimal Withdraw: Rp {MIN_WITHDRAW:,}\n"
-        f"📌 Maksimal Withdraw: Rp {MAX_WITHDRAW:,}\n\n"
-        "🕘 Jadwal:\n"
-        "• Senin - Jumat: 09:00 - 20:00\n"
-        "• Sabtu - Minggu: TUTUP"
+        f"💰 Saldo: Rp {row['balance'] or 0:,}\n"
+        f"📌 Status: {'🟢 OPEN' if open_status else '🔴 CLOSED'}\n\n"
+        f"🏦 Method: {row['wd_method'] or '-'}\n"
+        f"📱 Provider: {row['wd_provider'] or '-'}\n"
+        f"👤 Nama: {row['wd_name'] or '-'}\n"
+        f"📌 Nomor: {row['wd_number'] or '-'}\n\n"
+        f"Min: Rp {MIN_WITHDRAW:,} | Max: Rp {MAX_WITHDRAW:,}"
     )
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton("🔄 LIVE STATUS", callback_data="wd_live")],
         [InlineKeyboardButton("💸 REQUEST WITHDRAW", callback_data="wd_request")],
-        [InlineKeyboardButton("⚙️ ATUR BANK / EWALLET", callback_data="wd_settings")],
-        [InlineKeyboardButton("🔙 KEMBALI", callback_data="home")]
+        [InlineKeyboardButton("⚙️ SETTINGS", callback_data="wd_settings")],
+        [InlineKeyboardButton("🔙 HOME", callback_data="home")]
     ])
 
     await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
 
-# =========================
-# STEP 1 - PILIH JENIS
-# =========================
-
-@router.callback_query(F.data == "wd_settings")
-async def wd_settings(call: CallbackQuery):
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🏦 BANK", callback_data="wd_type:bank"),
-            InlineKeyboardButton(text="📱 EWALLET", callback_data="wd_type:ewallet"),
-        ],
-        [
-            InlineKeyboardButton(text="₿ CRYPTO", callback_data="wd_type:crypto")
-        ],
-        [
-            InlineKeyboardButton(text="🔙 BACK", callback_data="withdraw")
-        ]
-    ])
-
-    await call.message.edit_text(
-        "⚙️ <b>PILIH JENIS WITHDRAW</b>\n\n"
-        "Silakan pilih metode penarikan:",
-        parse_mode="HTML",
-        reply_markup=kb
-    )
-
 
 # =========================
-# STEP 2 - PILIH PROVIDER
+# REQUEST WITHDRAW HANDLER
 # =========================
-
-@router.callback_query(F.data.startswith("wd_type:"))
-async def wd_type(call: CallbackQuery):
-
-    t = call.data.split(":")[1]
-    user_states[call.from_user.id] = {"type": t}
-
-    if t == "bank":
-        options = BANKS
-        title = "🏦 PILIH BANK"
-    elif t == "ewallet":
-        options = EWALLETS
-        title = "📱 PILIH EWALLET"
-    else:
-        options = CRYPTO
-        title = "₿ PILIH CRYPTO WALLET"
-
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=o, callback_data=f"wd_provider:{o}")]
-            for o in options
-        ] + [[InlineKeyboardButton(text="🔙 BACK", callback_data="wd_settings")]]
-    )
-
-    await call.message.edit_text(title, parse_mode="HTML", reply_markup=kb)
-
-
-# =========================
-# STEP 3 - INPUT DATA
-# =========================
-
-@router.callback_query(F.data.startswith("wd_provider:"))
-async def wd_provider(call: CallbackQuery):
-
-    user_id = call.from_user.id
-
-    provider = call.data.split(":")[1]
-
-    # =========================
-    # SAFETY CHECK STATE
-    # =========================
-    if user_id not in user_states:
-        user_states[user_id] = {}
-
-    user_states[user_id]["provider"] = provider
-    user_states[user_id]["mode"] = "wd_input"
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(
-                text="🔙 Kembali",
-                callback_data="wd_settings"
-            ),
-            InlineKeyboardButton(
-                text="❌ Cancel",
-                callback_data="wd_cancel"
-            )
-        ]
-    ])
-
-    await call.message.edit_text(
-        "✍️ <b>MASUKKAN DATA WITHDRAW</b>\n\n"
-        f"🏦 Provider: <b>{provider}</b>\n\n"
-        "━━━━━━━━━━━━━━\n"
-        "📌 FORMAT WAJIB:\n"
-        "<code>Nama Lengkap | Nomor Rekening / Wallet</code>\n"
-        "━━━━━━━━━━━━━━\n\n"
-        "⚠️ Pastikan data benar sebelum kirim\n"
-        "❗ Kesalahan input bukan tanggung jawab sistem\n\n"
-        "💡 Contoh:\n"
-        "<code>Nama | 0812345678910</code>",
-        parse_mode="HTML",
-        reply_markup=kb
-    )
-
-    await call.answer()
-# =========================
-# STEP 4 - HANDLE INPUT
-# =========================
-
-@router.message(
-    F.text,
-    lambda message: user_states.get(
-        message.from_user.id, {}
-    ).get("mode") == "wd_input"
-)
-async def wd_input(message: Message):
-
-    print("=" * 50)
-    print("WD_INPUT KEPANGGIL")
-    print("USER:", message.from_user.id)
-    print("STATE:", user_states.get(message.from_user.id))
-    print("TEXT:", message.text)
-    print("=" * 50)
-
-    user_id = message.from_user.id
-    state = user_states.get(user_id)
-
-    try:
-        text = message.text.strip().replace("\n", " ")
-        parts = [x.strip() for x in text.split("|")]
-
-        if len(parts) != 2:
-            return await message.answer(
-                "❌ Format salah\n\n"
-                "Gunakan format:\n"
-                "<code>Nama | Nomor</code>",
-                parse_mode="HTML"
-            )
-
-        nama, nomor = parts
-
-        async with db_pool.acquire() as conn:
-            await conn.execute(
-                """
-                UPDATE users
-                SET wd_method=$1,
-                    wd_provider=$2,
-                    wd_name=$3,
-                    wd_number=$4
-                WHERE user_id=$5
-                """,
-                state["type"],
-                state["provider"],
-                nama,
-                nomor,
-                user_id
-            )
-
-        user_states.pop(user_id, None)
-
-        await message.answer(
-            "✅ Data withdraw berhasil disimpan"
-        )
-
-    except Exception as e:
-        print("WD INPUT ERROR:", repr(e))
-        await message.answer(
-            "❌ Gagal simpan data"
-        )
-
-
-# =========================
-# REQUEST WITHDRAW
-# =========================
-
 @router.callback_query(F.data == "wd_request")
 async def wd_request(call: CallbackQuery):
-
     user_id = call.from_user.id
     state = user_states.setdefault(user_id, {})
 
-    # =========================
-    # GLOBAL USER LOCK (ANTI DOUBLE CLICK)
-    # =========================
+    # LOCK agar tidak double click
     if state.get("wd_block"):
-        return await call.answer(
-            "⛔ Withdraw sudah diproses / terkunci",
-            show_alert=True
-        )
-
-    state["wd_block"] = True  # LOCK DARI AWAL
+        return await call.answer("⛔ Withdraw sedang diproses", show_alert=True)
+    state["wd_block"] = True
 
     try:
-        # =========================
-        # CHECK STATUS SYSTEM
-        # =========================
+        # cek sistem buka/tutup
         open_status, _, _ = wd_status()
-
         if not open_status:
-            state.pop("wd_block", None)
-            return await call.answer(
-                "🔴 Withdraw sedang TUTUP",
-                show_alert=True
-            )
+            return await call.answer("🔴 Withdraw tutup", show_alert=True)
 
         async with db_pool.acquire() as conn:
+            # ambil data user
             row = await conn.fetchrow("""
                 SELECT balance, wd_method, wd_provider, wd_name, wd_number
-                FROM users
-                WHERE user_id=$1
+                FROM users WHERE user_id=$1
             """, user_id)
 
-        if not row:
-            state.pop("wd_block", None)
-            return await call.answer(
-                "❌ User tidak ditemukan",
-                show_alert=True
+            if not row:
+                return await call.answer("❌ User tidak ditemukan", show_alert=True)
+
+            balance = row["balance"] or 0
+            if balance < MIN_WITHDRAW:
+                return await call.answer(f"❌ Saldo minimal Rp {MIN_WITHDRAW:,}", show_alert=True)
+
+            # tampilkan konfirmasi withdraw
+            await call.message.edit_text(
+                "💸 KONFIRMASI WITHDRAW\n\n"
+                f"💰 Saldo saat ini: Rp {balance:,}\n"
+                f"🏦 Method: {row['wd_method']} ({row['wd_provider']})\n\n"
+                "Tekan 🚀 CONFIRM untuk melanjutkan",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton("🚀 CONFIRM", callback_data="wd_confirm")],
+                    [InlineKeyboardButton("🔙 BACK", callback_data="withdraw")]
+                ])
             )
 
-        if not row["wd_method"]:
-            state.pop("wd_block", None)
-            return await call.answer(
-                "⚠️ Silakan atur rekening dulu",
-                show_alert=True
-            )
+    except Exception as e:
+        print("WD_REQUEST ERROR:", repr(e))
+        await call.answer("❌ Terjadi kesalahan", show_alert=True)
 
-        if row["balance"] < MIN_WITHDRAW:
-            state.pop("wd_block", None)
-            return await call.answer(
-                "❌ Saldo kurang",
-                show_alert=True
-            )
+    finally:
+        state.pop("wd_block", None)
 
-        # =========================
-        # CONFIRM UI
-        # =========================
+
+# =========================
+# CONFIRM / EXECUTE WITHDRAW
+# =========================
+@router.callback_query(F.data == "wd_confirm")
+async def wd_confirm(call: CallbackQuery):
+    user_id = call.from_user.id
+    state = user_states.setdefault(user_id, {})
+
+    # LOCK agar tidak double click
+    if state.get("wd_block"):
+        return await call.answer("⛔ Withdraw sedang diproses", show_alert=True)
+    state["wd_block"] = True
+
+    try:
+        async with db_pool.acquire() as conn:
+            # ambil saldo + pending withdraw
+            row = await conn.fetchrow("""
+                SELECT balance, wd_method, wd_provider, wd_name, wd_number,
+                    COALESCE((
+                        SELECT SUM(amount) FROM withdraws
+                        WHERE user_id=$1 AND status='pending'
+                    ),0) AS pending_total
+                FROM users WHERE user_id=$1
+            """, user_id)
+
+            if not row:
+                return await call.answer("❌ User tidak ditemukan", show_alert=True)
+
+            if not row["wd_method"] or not row["wd_name"] or not row["wd_number"]:
+                return await call.answer("❌ Data withdraw belum lengkap", show_alert=True)
+
+            balance = row["balance"] or 0
+            pending = row["pending_total"]
+            total_wd = balance + pending
+
+            if total_wd < MIN_WITHDRAW:
+                return await call.answer(
+                    f"❌ Total saldo ({total_wd:,}) belum cukup",
+                    show_alert=True
+                )
+
+            # 🔥 Insert withdraw baru (hanya saldo baru, pending tetap)
+            if balance > 0:
+                await conn.execute("""
+                    INSERT INTO withdraws(
+                        user_id, amount, fee, net_amount,
+                        method, account_name, account_number, status
+                    )
+                    VALUES($1,$2,0,$2,$3,$4,$5,'pending')
+                """,
+                user_id,
+                balance,
+                row["wd_method"],
+                row["wd_name"],
+                row["wd_number"]
+                )
+
+                # reset saldo
+                await conn.execute("""
+                    UPDATE users
+                    SET balance=0,
+                        total_withdraw=COALESCE(total_withdraw,0)+$1
+                    WHERE user_id=$2
+                """, balance, user_id)
+
         await call.message.edit_text(
-            "💸 <b>WITHDRAW CONFIRMATION</b>\n\n"
-            f"💰 Saldo: Rp {row['balance']:,}\n"
-            f"🏦 {row['wd_method']} ({row['wd_provider']})\n"
-            f"👤 {row['wd_name']}\n"
-            f"📌 {row['wd_number']}\n\n"
-            "⚠️ Setelah lanjut, saldo akan diproses",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="🚀 PROSES WITHDRAW",
-                        callback_data="wd_confirm"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="🔙 BACK",
-                        callback_data="withdraw"
-                    )
-                ]
-            ])
+            f"⏳ Withdraw pending\n💰 Total pending saat ini: Rp {total_wd:,}\n"
+            "⚠️ Admin akan memproses manual"
         )
 
     except Exception as e:
-        print("WD REQUEST ERROR:", repr(e))
+        print("WD_CONFIRM ERROR:", repr(e))
+        await call.answer("❌ Terjadi kesalahan", show_alert=True)
 
-        # =========================
-        # ALWAYS UNLOCK SAFETY
-        # =========================
+    finally:
         state.pop("wd_block", None)
 
-        try:
-            await call.message.edit_text("❌ Terjadi kesalahan sistem")
-        except:
-            pass
+
 # =========================
-# EXECUTE WITHDRAW
+# ADMIN NOTIFY SUCCESS FUNCTION
 # =========================
-
-@router.callback_query(F.data == "wd_confirm")
-async def wd_confirm(call: CallbackQuery):
-
-    user_id = call.from_user.id
-
-    async with db_pool.acquire() as conn:
-
-        row = await conn.fetchrow("""
-            SELECT balance, wd_method, wd_provider, wd_name, wd_number
-            FROM users
-            WHERE user_id=$1
-        """, user_id)
-
-        if not row:
-            return await call.answer("❌ User tidak ditemukan", show_alert=True)
-
-        if row["balance"] < MIN_WITHDRAW:
-            return await call.answer("❌ Saldo kurang", show_alert=True)
-
-        if not row["wd_method"] or not row["wd_name"] or not row["wd_number"]:
-            return await call.answer("❌ Data withdraw belum lengkap", show_alert=True)
-
-        amount = row["balance"]
-
-        await conn.execute("""
-            INSERT INTO withdraws(
-                user_id,
-                amount,
-                fee,
-                net_amount,
-                method,
-                account_name,
-                account_number,
-                status
-            )
-            VALUES($1,$2,0,$2,$3,$4,$5,'pending')
-        """,
-        user_id,
-        amount,
-        row["wd_method"],
-        row["wd_name"],
-        row["wd_number"]
+async def notify_withdraw_success(user_id: int, amount: int, method: str, provider: str, name: str, number: str):
+    try:
+        await bot.send_message(
+            user_id,
+            f"✅ Withdraw SUKSES!\n\n"
+            f"💰 Total diterima: Rp {amount:,}\n"
+            f"🏦 {method} ({provider})\n"
+            f"👤 {name}\n"
+            f"📌 {number}"
         )
-
-        await conn.execute("""
-            UPDATE users
-            SET balance = 0,
-                total_withdraw = COALESCE(total_withdraw,0) + $1
-            WHERE user_id=$2
-        """, amount, user_id)
-
-    await call.message.edit_text(
-        "⏳ <b>WITHDRAW PENDING</b>\n\n"
-        "📌 Dana akan diproses manual oleh admin\n"
-        "⏰ Estimasi 1-24 jam",
-        parse_mode="HTML"
-    )
+    except Exception as e:
+        print("NOTIFY WD SUCCESS ERROR:", repr(e))
         
 # =========================
 # KEYBOARD
@@ -1896,11 +1765,6 @@ async def cancel(call: CallbackQuery):
     await call.answer(
         "❌ Upload dibatalkan"
     )
-# =========================
-# GLOBAL
-# =========================
-
-COOLDOWN_TIME = 5
 
 # =========================
 # NORMALIZER
@@ -1913,20 +1777,16 @@ def normalize_type(t):
         return "video"
     return "document"
 
-
 # =========================
 # COOLDOWN
 # =========================
 def is_cooldown(user_id):
     now = time.time()
     last = cooldown["global"].get(user_id, 0)
-
     if now - last < COOLDOWN_TIME:
         return True
-
     cooldown["global"][user_id] = now
     return False
-
 
 # =========================
 # LOAD MEDIA
@@ -1934,11 +1794,10 @@ def is_cooldown(user_id):
 async def load_media(code: str):
     if not code:
         return []
-
     try:
         async with db_pool.acquire() as conn:
             rows = await conn.fetch("""
-                SELECT file_id, file_type, COALESCE(file_size,0) AS file_size
+                SELECT file_id, file_type, is_paid, price
                 FROM medias
                 WHERE code=$1
                 ORDER BY id ASC
@@ -1946,528 +1805,180 @@ async def load_media(code: str):
     except Exception as e:
         print("DB ERROR:", e)
         return []
-
-    return [
-        {
-            "file_id": r["file_id"],
-            "file_type": normalize_type(r["file_type"]),
-            "file_size": r["file_size"]
-        }
-        for r in rows
-    ]
-
+    return rows
 
 # =========================
-# SEND MEDIA (ANTI BAN SAFE)
+# CHECK PAYMENT
 # =========================
-async def send_media(bot, chat_id: int, chunk: list):
-
-    if not chunk:
-        return False
-
-    media = []
-
-    for m in chunk[:5]:
-
-        fid = m.get("file_id")
-        ftype = (m.get("file_type") or "").lower()
-
-        if not fid:
-            continue
-
-        try:
-
-            if ftype == "photo":
-                media.append(
-                    InputMediaPhoto(media=fid)
-                )
-
-            elif ftype == "video":
-                media.append(
-                    InputMediaVideo(media=fid)
-                )
-
-            else:
-                media.append(
-                    InputMediaDocument(media=fid)
-                )
-
-        except Exception as e:
-            print("MEDIA BUILD ERROR:", e)
-
-    if not media:
-        return False
-
-    for attempt in range(5):
-
-        try:
-
-            await global_throttle()
-
-            await bot.send_media_group(
-                chat_id=chat_id,
-                media=media
-            )
-
-            return True
-
-        except TelegramRetryAfter as e:
-
-            print(
-                f"FLOODWAIT {e.retry_after}s"
-            )
-
-            await asyncio.sleep(
-                e.retry_after + 1
-            )
-
-        except TelegramBadRequest as e:
-
-            print(
-                "BAD REQUEST:",
-                e
-            )
-
-            return False
-
-        except Exception as e:
-
-            print(
-                f"SEND MEDIA ERROR {attempt+1}:",
-                e
-            )
-
-            await asyncio.sleep(
-                1 + attempt
-            )
-
-    print(
-        "❌ GAGAL KIRIM MEDIA"
-    )
-
-    return False
-    
-# =========================
-# KEYBOARD
-# =========================
-def build_kb(user_id, page, total_pages):
-
-    history = page_history.get(user_id, set())
-    rows = []
-
-    prev_btn = InlineKeyboardButton(
-        text="⬅ Prev" if page > 0 else "⛔ Prev",
-        callback_data="prev" if page > 0 else "noop"
-    )
-
-    next_btn = InlineKeyboardButton(
-        text="➡ Next" if page < total_pages - 1 else "⛔ Next",
-        callback_data="next" if page < total_pages - 1 else "noop"
-    )
-
-    rows.append([prev_btn, next_btn])
-
-    # page indicator
-    window = 5
-    start = max(0, page - 2)
-    end = min(total_pages, start + window)
-
-    page_row = []
-    for i in range(start, end):
-
-        if i == page:
-            mark = "🟢"
-        elif i in history:
-            mark = "🟡"
-        else:
-            mark = "⚪"
-
-        page_row.append(
-            InlineKeyboardButton(
-                text=f"{i+1}{mark}",
-                callback_data=f"page:{i}"
-            )
-        )
-
-    if page_row:
-        rows.append(page_row)
-
-    # =========================
-    # LINK BUTTONS (FIXED)
-    # =========================
-    rows.append([
-        InlineKeyboardButton(
-            text="📢 CHANNEL UPDATE",
-            url="https://t.me/+3g_yhHwxCrc5ZTg9"
-        ),
-        InlineKeyboardButton(
-            text="💬 GROUP CHAT",
-            url="https://t.me/+1tipdp-NTywzODhl"
-        )
-    ])
-
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-# =========================
-# RENDER PAGE (FIX PANEL BAWAH)
-# =========================
-
-async def render_page(user_id: int, bot, chat_id: int):
-
-    state = user_states.get(user_id)
-
-    if not state:
-        return
-
-    data = state.get("data") or []
-
-    if not data:
-        return
-
-    page = state.get("page", 0)
-    size = state.get("page_size", 5)
-
-    total_pages = max(
-        1,
-        (len(data) + size - 1) // size
-    )
-
-    page = max(
-        0,
-        min(page, total_pages - 1)
-    )
-
-    state["page"] = page
-
-    start = page * size
-    end = start + size
-
-    chunk = data[start:end]
-
-    # =========================
-    # HISTORY
-    # =========================
-
-    page_history.setdefault(
-        user_id,
-        set()
-    ).add(page)
-
-    # =========================
-    # SEND MEDIA
-    # =========================
-
-    try:
-
-        await send_media(
-            bot,
-            chat_id,
-            chunk
-        )
-
-    except Exception as e:
-
-        print(
-            "SEND MEDIA ERROR:",
-            e
-        )
-
-    # =========================
-    # PANEL TEXT
-    # =========================
-
-    text = (
-        f"📦 CODE: <code>{state.get('code','-')}</code>\n"
-        f"📄 Page: {page + 1}/{total_pages}\n"
-        f"📁 Media: {start + 1}-{start + len(chunk)} / {len(data)}\n\n"
-        "👇 CONTROL PANEL DI BAWAH"
-    )
-
-    kb = build_kb(
-        user_id,
-        page,
-        total_pages
-    )
-
-    # =========================
-    # DELETE PANEL LAMA
-    # =========================
-
-    panel_id = state.get("last_panel_msg")
-
-    if panel_id:
-
-        try:
-
-            await safe_send(
-                bot.delete_message,
-                chat_id=chat_id,
-                message_id=panel_id
-            )
-
-        except Exception as e:
-
-            print(
-                "DELETE PANEL ERROR:",
-                e
-            )
-
-    # =========================
-    # CREATE PANEL BARU
-    # =========================
-
-    try:
-
-        msg = await safe_send(
-            bot.send_message,
-            chat_id=chat_id,
-            text=text,
-            reply_markup=kb,
-            parse_mode="HTML"
-        )
-
-        if msg:
-            state["last_panel_msg"] = msg.message_id
-
-    except Exception as e:
-
-        print(
-            "SEND PANEL ERROR:",
-            e
-        )
+async def check_paid(conn, user_id: int, code: str):
+    return await conn.fetchval("""
+        SELECT 1 FROM payments
+        WHERE user_id=$1 AND code=$2 AND status='PAID'
+        LIMIT 1
+    """, user_id, code)
 
 # =========================
-# PAGINATION LOCK
-# =========================
-pagination_lock = defaultdict(asyncio.Lock)
-
-# =========================
-# SINGLE PAGINATION HANDLER
-# =========================
-@router.callback_query(
-    F.data.in_(["next", "prev"]) |
-    F.data.startswith("page:")
-)
-async def pagination(call: CallbackQuery):
-
-    user_id = call.from_user.id
-
-    # =========================
-    # LOCK USER (ANTI SPAM CLICK)
-    # =========================
-    async with pagination_lock[user_id]:
-
-        state = user_states.get(user_id)
-
-        if not state:
-            return await call.answer(
-                "Session expired",
-                show_alert=True
-            )
-
-        data = state.get("data") or []
-
-        if not data:
-            return await call.answer(
-                "No data",
-                show_alert=True
-            )
-
-        old_page = state.get(
-            "page",
-            0
-        )
-
-        size = state.get(
-            "page_size",
-            5
-        )
-
-        max_page = (
-            len(data) - 1
-        ) // size
-
-        page = old_page
-
-        # =========================
-        # PAGE CONTROL
-        # =========================
-        if call.data == "next":
-
-            page += 1
-
-        elif call.data == "prev":
-
-            page -= 1
-
-        else:
-
-            try:
-
-                page = int(
-                    call.data.split(":")[1]
-                )
-
-            except Exception:
-
-                return await call.answer(
-                    "Error"
-                )
-
-        page = max(
-            0,
-            min(page, max_page)
-        )
-
-        # =========================
-        # NO CHANGE
-        # =========================
-        if page == old_page:
-            return await call.answer()
-
-        state["page"] = page
-
-        # =========================
-        # RENDER PAGE
-        # =========================
-        await render_page(
-            user_id,
-            call.bot,
-            call.message.chat.id
-        )
-
-        await call.answer()
-
-# =========================
-# NOOP
-# =========================
-@router.callback_query(F.data == "noop")
-async def noop(call: CallbackQuery):
-
-    await call.answer(
-        "😏 FULL JANCOK"
-    )
-# =========================
-# START GET FILE
+# GETFILE START
 # =========================
 @router.callback_query(F.data == "getfile")
 async def start_get(call: CallbackQuery):
-
     user_id = call.from_user.id
-    state = user_states.get(user_id, {})
-
-    # kalau sedang upload → jangan ganggu
-    if state.get("mode") == "upload":
-        return await call.answer(
-            "❌ Selesaikan upload dulu",
-            show_alert=True
-        )
-
-    # reset semua state yang konflik
-    user_states[user_id] = {
-        "mode": "getfile",
-        "step": "input_code"
-    }
-
-    upload_sessions.pop(user_id, None)
-
-    await call.message.edit_text(
-        "📥 Kirim CODE 😏"
-    )
-
+    user_states[user_id] = {"mode": "getfile", "step": "input_code"}
+    await call.message.edit_text("📥 Kirim CODE media kamu")
     await call.answer()
+
 # =========================
 # RECEIVE CODE
 # =========================
 @router.message(F.text.regexp(r"^bluebirdbot_"))
 async def receive_code(message: Message):
-
     user_id = message.from_user.id
     state = user_states.get(user_id)
-
     if not state or state.get("mode") != "getfile":
         return
-
     if is_cooldown(user_id):
         return await message.answer("⏳ Jangan spam")
 
-    codes = re.findall(
-        r"bluebirdbot_\d+v_\d+p_\d+d_[a-f0-9]{12}",
-        message.text or ""
-    )
+    code = message.text.strip()
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT file_id, file_type, is_paid, price
+            FROM medias
+            WHERE code=$1
+            ORDER BY id ASC
+        """, code)
 
-    if not codes:
-        return await message.answer("❌ CODE salah")
+        if not rows:
+            return await message.answer("❌ Code tidak ditemukan")
 
-    codes = list(dict.fromkeys(codes))[:3]
+        is_paid = any(r["is_paid"] for r in rows)
+        price = rows[0]["price"] if is_paid else 0
 
-    all_data = []
-
-    for code in codes:
-
-        data = await load_media(code)
-
-        if data:
-            all_data.extend(data)
-
-        await asyncio.sleep(0.1)
-
-    if not all_data:
-        return await message.answer("❌ Tidak ditemukan")
-
-    all_data = all_data[:50]
-
-    # =========================
-    # HAPUS PANEL LAMA
-    # =========================
-
-    old_state = user_states.get(user_id)
-
-    if old_state:
-
-        old_panel = old_state.get(
-            "last_panel_msg"
-        )
-
-        if old_panel:
-
-            try:
-
-                await message.bot.delete_message(
-                    chat_id=message.chat.id,
-                    message_id=old_panel
+        # kalau berbayar
+        if is_paid:
+            paid = await check_paid(conn, user_id, code)
+            if not paid:
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text=f"💳 PAY NOW ({price})", callback_data=f"pay:{code}")]
+                ])
+                return await message.answer(
+                    f"🔒 CODE BERBAYAR\n💰 Harga: {price}\nKlik untuk bayar dulu.",
+                    reply_markup=kb
                 )
 
-            except Exception:
-                pass
-
-    # =========================
-    # BUAT SESSION BARU
-    # =========================
-
+    # free atau sudah bayar
+    data = [{"file_id": r["file_id"], "file_type": normalize_type(r["file_type"])} for r in rows]
     user_states[user_id] = {
         "mode": "view",
-        "code": codes[0],
+        "code": code,
         "page": 0,
-        "page_size": 5,
-        "data": all_data,
+        "page_size": 10,
+        "data": data,
         "last_panel_msg": None
     }
-
     page_history[user_id] = set()
+    await message.answer(f"📦 Total file: {len(data)}")
+    await render_page(user_id, message.bot, message.chat.id)
 
-    await message.answer(
-        f"📦 Ditemukan {len(all_data)} file"
+# =========================
+# PAYMENT BUTTON
+# =========================
+@router.callback_query(F.data.startswith("pay:"))
+async def pay(call: CallbackQuery):
+    code = call.data.split(":")[1]
+    user_id = call.from_user.id
+    async with db_pool.acquire() as conn:
+        price = await conn.fetchval("SELECT price FROM medias WHERE code=$1 LIMIT 1", code)
+    qr_url = f"https://qr-gateway.com/qr?code={code}&user={user_id}&amount={price}"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📲 OPEN QR PAYMENT", url=qr_url)],
+        [InlineKeyboardButton(text="🔄 CHECK PAYMENT", callback_data=f"checkpay:{code}")]
+    ])
+    await call.message.edit_text(
+        f"💳 PAYMENT REQUIRED\nCODE: `{code}`\nPRICE: {price}",
+        reply_markup=kb,
+        parse_mode="Markdown"
     )
 
-    # =========================
-    # RENDER PAGE PERTAMA
-    # =========================
+# =========================
+# CHECK PAYMENT
+# =========================
+@router.callback_query(F.data.startswith("checkpay:"))
+async def check_pay(call: CallbackQuery):
+    user_id = call.from_user.id
+    code = call.data.split(":")[1]
+    async with db_pool.acquire() as conn:
+        paid = await conn.fetchval("SELECT 1 FROM payments WHERE user_id=$1 AND code=$2 AND status='PAID'", user_id, code)
+        if not paid:
+            return await call.answer("❌ Belum bayar", show_alert=True)
+        rows = await conn.fetch("SELECT file_id, file_type FROM medias WHERE code=$1 ORDER BY id ASC", code)
+    data = [{"file_id": r["file_id"], "file_type": normalize_type(r["file_type"])} for r in rows]
+    user_states[user_id] = {"mode": "view", "code": code, "page": 0, "page_size": 10, "data": data, "last_panel_msg": None}
+    await call.message.edit_text("✅ PAYMENT VERIFIED\n📦 Loading media...")
+    await render_page(user_id, call.bot, call.message.chat.id)
 
-    await render_page(
-        user_id,
-        message.bot,
-        message.chat.id
-    )
+# =========================
+# RENDER PAGE + PAGINATION
+# =========================
+async def render_page(user_id: int, bot, chat_id: int):
+    state = user_states.get(user_id)
+    if not state:
+        return
+    data = state["data"]
+    page = state.get("page", 0)
+    size = state.get("page_size", 10)
+    total_pages = max(1, (len(data) + size - 1) // size)
+    page = max(0, min(page, total_pages - 1))
+    state["page"] = page
+    start = page * size
+    end = start + size
+    chunk = data[start:end]
+
+    # SEND MEDIA
+    media = []
+    for m in chunk[:10]:
+        if m["file_type"] == "photo":
+            media.append(InputMediaPhoto(media=m["file_id"]))
+        elif m["file_type"] == "video":
+            media.append(InputMediaVideo(media=m["file_id"]))
+        else:
+            media.append(InputMediaDocument(media=m["file_id"]))
+    if media:
+        await bot.send_media_group(chat_id, media)
+
+    # KEYBOARD
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⬅ Prev", callback_data="prev"),
+            InlineKeyboardButton(text="➡ Next", callback_data="next")
+        ],
+        [InlineKeyboardButton(text="📢 Channel", url="https://t.me/yourchannel")]
+    ])
+    text = f"📦 Page {page+1}/{total_pages}"
+    await bot.send_message(chat_id, text, reply_markup=kb)
+
+# =========================
+# PAGINATION HANDLER
+# =========================
+@router.callback_query(F.data.in_(["next", "prev"]))
+async def pagination(call: CallbackQuery):
+    user_id = call.from_user.id
+    async with pagination_lock[user_id]:
+        state = user_states.get(user_id)
+        if not state: return await call.answer("Session expired", show_alert=True)
+        data = state.get("data") or []
+        if not data: return await call.answer("No data", show_alert=True)
+        old_page = state.get("page", 0)
+        size = state.get("page_size", 10)
+        max_page = (len(data)-1)//size
+        page = old_page
+        if call.data=="next": page+=1
+        elif call.data=="prev": page-=1
+        page = max(0, min(page, max_page))
+        if page==old_page: return await call.answer()
+        state["page"] = page
+        await render_page(user_id, call.bot, call.message.chat.id)
+        await call.answer()
 # ======================
 # ADD USER FUNCTION
 # =========================
