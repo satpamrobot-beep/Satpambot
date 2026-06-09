@@ -419,8 +419,8 @@ async def start(message: Message, bot: Bot):
                         [InlineKeyboardButton("✅ Sudah Join", callback_data="check_sub")]
                     ])
                 )
-        except:
-            return await message.answer("⚠️ Error force sub")
+        except Exception as e:
+            print("FORCE SUB EROR:", repr(e))
 
     text, keyboard = await build_dashboard(user_id, username)
 
@@ -1045,7 +1045,7 @@ def upload_kb():
     )
 
 
-@router.message(F.text == "📤 Up File")
+@router.message(F.text == "📤 Upfile")
 async def up_file(message: Message):
 
     user_id = message.from_user.id
@@ -1801,7 +1801,7 @@ async def noop(call: CallbackQuery):
 # =========================
 # START GET FILE
 # =========================
-@router.message(F.text == "📥 Get File")
+@router.message(F.text == "📥 Getfile")
 async def start_get(message: Message):
 
     user_id = message.from_user.id
