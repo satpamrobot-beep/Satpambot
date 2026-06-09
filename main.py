@@ -338,22 +338,6 @@ async def bayargg_webhook(req: Request):
         """, amount, user_id)
 
     return {"ok": True, "msg": "payment processed"}
-    
-# =========================
-# KEYBOARD
-# =========================
-
-def get_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="📤 Up File"),
-                KeyboardButton(text="📥 Get File")
-            ]
-        ],
-        resize_keyboard=True,
-        input_field_placeholder="Upload atau ambil file... 😏"
-    )
 
 # =========================
 # START DAN FORCE SUB
@@ -431,26 +415,24 @@ async def start(message: Message, bot: Bot):
     )
 
     # =========================
-    # KEYBOARD
+    # KEYBOARD (UPDATED CLEAN)
     # =========================
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-    [
-        InlineKeyboardButton(text="💳 Deposit", callback_data="deposit"),
-        InlineKeyboardButton(text="💸 Withdraw", callback_data="withdraw"),
-    ],
-    [
-        InlineKeyboardButton(text="🔥 Code Trending", callback_data="trending"),
-    ],
-    [
-        InlineKeyboardButton(text="🆕 Code New", callback_data="code_new"),
-    ],
-    [
-        InlineKeyboardButton(text="📊 Statistik", callback_data="statistik"),
-    ],
-    [
-        InlineKeyboardButton(text="❓ Help", callback_data="help"),
-    ],
-])
+        [
+            InlineKeyboardButton(text="📤 Upfile", callback_data="upfile"),
+            InlineKeyboardButton(text="📥 Getfile", callback_data="getfile"),
+        ],
+        [
+            InlineKeyboardButton(text="💳 Deposit", callback_data="deposit"),
+            InlineKeyboardButton(text="💸 Withdraw", callback_data="withdraw"),
+        ],
+        [
+            InlineKeyboardButton(text="📊 Statistik", callback_data="statistik"),
+            InlineKeyboardButton(text="❓ Help", callback_data="help"),
+        ],
+    ])
+
+    await message.answer(text, reply_markup=keyboard)
 
     # =========================
     # SEND DASHBOARD
