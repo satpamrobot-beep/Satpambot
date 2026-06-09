@@ -15,7 +15,6 @@ import hmac
 import uvicorn
 import httpx
 
-from aiogram import F
 from datetime import datetime
 from fastapi import FastAPI, Request, HTTPException
 from collections import defaultdict
