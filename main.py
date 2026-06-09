@@ -297,22 +297,6 @@ async def safe_send(func, *args, **kwargs):
             await asyncio.sleep(1)
 
 # =========================
-# FASTAPI INIT (WAJIB DI ATAS)
-# =========================
-
-BAYARGG_SECRET = os.getenv("BAYARGG_SECRET", "SECRET_KAMU")
-
-def verify_signature(data: dict, signature: str):
-    required_fields = ["invoice_id", "amount", "status"]
-
-    if not all(k in data for k in required_fields):
-        return False
-
-    raw = raw = f"{str(data['invoice_id'])}:{str(data['amount'])}:{str(data['status']).upper()}:{BAYARGG_SECRET}"
-    expected = hashlib.sha256(raw.encode()).hexdigest()
-
-    return hmac.compare_digest(expected, signature or "")
-# =========================
 # ROUTER
 # =========================
 
