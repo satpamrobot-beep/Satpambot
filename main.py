@@ -1071,30 +1071,48 @@ async def up_file(call: CallbackQuery):
     last_edit_time.pop(user_id, None)
 
     # =========================
-    # CREATE STATE
+    # SET USER STATE
     # =========================
     user_states[user_id] = {
         "mode": "upload"
     }
 
+    # =========================
+    # CREATE UPLOAD SESSION
+    # =========================
     upload_sessions[user_id] = {
         "video": 0,
         "photo": 0,
         "document": 0,
         "items": [],
-        "msg_id": call.message.message_id
+        "msg_id": call.message.message_id,
+        "price": 0,
+        "share": True,
+        "processing": False,
+        "created_at": time.time()
     }
 
     # =========================
-    # EDIT PANEL
+    # OPEN UPLOAD PANEL
     # =========================
-    await call.message.edit_text(
-        "📤 UPLOAD MODE AKTIF\n\n"
-        "😏 Kirim file kamu sekarang.\n"
-        "Tekan DONE kalau sudah.\n\n"
-        "💀 Jangan lama-lama ya...",
-        reply_markup=upload_kb()
-    )
+    try:
+        await call.message.edit_text(
+            "📤 <b>UPLOAD MODE AKTIF</b>\n\n"
+            "📁 Kirim media kamu sekarang.\n"
+            "🖼 Foto, 🎬 Video, 📄 Dokumen didukung.\n\n"
+            "✅ Tekan DONE jika sudah selesai.\n"
+            "❌ Tekan CANCEL untuk membatalkan.",
+            parse_mode="HTML",
+            reply_markup=upload_kb()
+        )
+
+    except Exception as e:
+        print(f"UPFILE ERROR: {e}")
+
+        await call.message.answer(
+            "📤 Upload mode aktif.\n"
+            "Silakan kirim media kamu."
+        )
 
     await call.answer()
 # =========================
@@ -1115,11 +1133,17 @@ async def handle_media(message: Message):
     if not state or state.get("mode") != "upload":
         return
 
-    if not s or not s.get("msg_id"):
+    if not s:
         return
 
     # =========================
-    # GET FILE
+    # LIMITS
+    # =========================
+    MAX_MEDIA = 100
+    MAX_TOTAL_SIZE = 2 * 1024 * 1024 * 1024  # 2GB
+
+    # =========================
+    # DETECT FILE
     # =========================
     file_obj = None
     file_type = None
@@ -1127,31 +1151,69 @@ async def handle_media(message: Message):
     if message.photo:
         file_obj = message.photo[-1]
         file_type = "photo"
-        s["photo"] = s.get("photo", 0) + 1
 
     elif message.video:
         file_obj = message.video
         file_type = "video"
-        s["video"] = s.get("video", 0) + 1
 
     elif message.document:
         file_obj = message.document
         file_type = "document"
-        s["document"] = s.get("document", 0) + 1
 
     if not file_obj:
         return
 
     file_id = file_obj.file_id
-    size = getattr(file_obj, "file_size", 0) or 0
+    file_size = getattr(file_obj, "file_size", 0) or 0
 
     # =========================
-    # SAVE TO SESSION
+    # MEDIA LIMIT
+    # =========================
+    if len(s["items"]) >= MAX_MEDIA:
+
+        try:
+            await message.delete()
+        except Exception:
+            pass
+
+        return
+
+    # =========================
+    # SIZE LIMIT
+    # =========================
+    current_size = sum(
+        item.get("size", 0)
+        for item in s["items"]
+    )
+
+    if current_size + file_size > MAX_TOTAL_SIZE:
+
+        try:
+            await message.delete()
+        except Exception:
+            pass
+
+        return
+
+    # =========================
+    # COUNTER
+    # =========================
+    if file_type == "photo":
+        s["photo"] += 1
+
+    elif file_type == "video":
+        s["video"] += 1
+
+    elif file_type == "document":
+        s["document"] += 1
+
+    # =========================
+    # SAVE SESSION
     # =========================
     s["items"].append({
         "file_id": file_id,
         "type": file_type,
-        "size": size
+        "size": file_size
     })
 
     # =========================
@@ -1159,70 +1221,97 @@ async def handle_media(message: Message):
     # =========================
     try:
         await message.delete()
-    except:
+    except Exception:
         pass
 
     # =========================
-    # THROTTLE (SAFE)
+    # EDIT THROTTLE
     # =========================
     now = time.time()
-    last = last_edit_time.get(user_id, 0)
 
-    if now - last < 1.5:
+    if now - last_edit_time.get(user_id, 0) < 1.5:
         return
 
     last_edit_time[user_id] = now
 
     # =========================
-    # CALCULATE STATS
+    # STATS
     # =========================
     total = len(s["items"])
+
+    total_size = sum(
+        item.get("size", 0)
+        for item in s["items"]
+    )
+
     size_mb = round(
-        sum(x.get("size", 0) for x in s["items"]) / (1024 * 1024),
+        total_size / (1024 * 1024),
         2
     )
 
-    bar_len = 10
-    filled = min(bar_len, total)
-    bar = "█" * filled + "░" * (bar_len - filled)
+    progress = min(
+        100,
+        int((total / MAX_MEDIA) * 100)
+    )
+
+    bar_length = 10
+    filled = int(progress / 10)
+
+    bar = (
+        "█" * filled +
+        "░" * (bar_length - filled)
+    )
 
     text = (
-        "📤 UPLOAD MODE\n\n"
-        f"📊 Progress : [{bar}] {total} file\n\n"
-        f"🖼 Photo    : {s.get('photo', 0)}\n"
-        f"🎬 Video    : {s.get('video', 0)}\n"
-        f"📁 Document : {s.get('document', 0)}\n"
-        f"💾 Size     : {size_mb} MB\n\n"
+        "📤 <b>UPLOAD MODE</b>\n\n"
+        f"📊 [{bar}] {progress}%\n\n"
+        f"📁 Total File : <b>{total}</b>\n"
+        f"🖼 Photo      : {s['photo']}\n"
+        f"🎬 Video      : {s['video']}\n"
+        f"📄 Document   : {s['document']}\n"
+        f"💾 Size       : {size_mb} MB\n\n"
         "━━━━━━━━━━━━━━\n"
-        "Tekan DONE kalau sudah 😏"
+        "✅ Tekan DONE jika selesai"
     )
 
     # =========================
-    # SAFE EDIT MESSAGE
+    # UPDATE PANEL
     # =========================
     try:
+
         await safe_send(
             message.bot.edit_message_text,
             chat_id=message.chat.id,
             message_id=s["msg_id"],
             text=text,
+            parse_mode="HTML",
             reply_markup=upload_kb()
         )
+
     except Exception as e:
-        print("EDIT ERROR:", e)
+        print("UPLOAD PANEL ERROR:", e)
         
 # =========================
 # GENERATE CODE
 # =========================
 
+# =========================
+# GENERATE CODE
+# =========================
+
 def generate_code(v, p, d):
-    import hashlib, secrets
+    import hashlib
+    import secrets
 
     base = f"{v}{p}{d}{secrets.token_hex(4)}"
     rand = hashlib.sha1(base.encode()).hexdigest()[:12]
 
-    return f"decodefilebot_{v}v_{p}p_{d}d_{rand}"
+    return f"bluebirdbot_{v}v_{p}p_{d}d_{rand}"
 
+
+# =========================
+# UPLOAD DONE
+# =========================
 
 @router.callback_query(F.data == "upload_done")
 async def done(call: CallbackQuery):
@@ -1232,35 +1321,173 @@ async def done(call: CallbackQuery):
 
     if not s or not s.get("items"):
         return await call.answer(
-            "😏 kosong? ya jelas gak ada yang diproses",
+            "😏 Belum ada media yang diupload",
             show_alert=True
         )
 
-    # 🔥 ANTI DOUBLE CLICK / RACE CONDITION
+    user_states[user_id] = {
+        "mode": "set_price"
+    }
+
+    await call.message.edit_text(
+        "💰 Masukkan harga media\n\n"
+        "Minimal Rp1.000\n"
+        "Maksimal Rp100.000\n\n"
+        "Kirim angka saja."
+    )
+
+    await call.answer()
+
+
+# =========================
+# SET PRICE
+# =========================
+
+@router.message(F.text)
+async def set_price(message: Message):
+
+    user_id = message.from_user.id
+
+    state = user_states.get(user_id)
+
+    if not state or state.get("mode") != "set_price":
+        return
+
+    if not message.text.isdigit():
+        return await message.answer(
+            "❌ Harga harus angka"
+        )
+
+    price = int(message.text)
+
+    if price < 1000:
+        return await message.answer(
+            "❌ Minimal Rp1.000"
+        )
+
+    if price > 100000:
+        return await message.answer(
+            "❌ Maksimal Rp100.000"
+        )
+
+    upload_sessions[user_id]["price"] = price
+
+    user_states[user_id] = {
+        "mode": "set_media_system"
+    }
+
+    await message.answer(
+        f"💰 Harga diset Rp {price:,}\n\n"
+        "Pilih sistem media:",
+        reply_markup=media_system_kb()
+    )
+
+
+# =========================
+# MEDIA SYSTEM
+# =========================
+
+@router.callback_query(
+    F.data.in_(
+        ["media_share", "media_noshare"]
+    )
+)
+async def media_system(call: CallbackQuery):
+
+    user_id = call.from_user.id
+
+    s = upload_sessions.get(user_id)
+
+    if not s:
+        return
+
+    s["share"] = (
+        call.data == "media_share"
+    )
+
+    await save_upload(call)
+
+
+# =========================
+# SAVE UPLOAD
+# =========================
+
+async def save_upload(call: CallbackQuery):
+
+    user_id = call.from_user.id
+    s = upload_sessions.get(user_id)
+
+    if not s:
+        return
+
     if s.get("processing"):
-        return await call.answer("⏳ Lagi diproses...")
+        return await call.answer(
+            "⏳ Sedang diproses..."
+        )
+
     s["processing"] = True
 
     try:
+
+        # =========================
+        # GENERATE CODE
+        # =========================
         code = generate_code(
             s.get("video", 0),
             s.get("photo", 0),
             s.get("document", 0)
         )
 
+        # =========================
+        # STATS
+        # =========================
         total_items = len(s["items"])
-        total_size = sum(x.get("size", 0) for x in s["items"])
 
-        saved_items = []
+        total_size = sum(
+            item.get("size", 0)
+            for item in s["items"]
+        )
 
+        # =========================
+        # CREATOR
+        # =========================
+        creator = (
+            f"@{call.from_user.username}"
+            if call.from_user.username
+            else call.from_user.full_name
+        )
+
+        # =========================
+        # SETTINGS
+        # =========================
+        media_price = s.get("price", 0)
+        share_enabled = s.get("share", True)
+
+        price_text = (
+            f"Rp {media_price:,}"
+            if media_price > 0
+            else "Free"
+        )
+
+        media_system_text = (
+            "🔓 Share"
+            if share_enabled
+            else "🔒 No Share"
+        )
+
+        # =========================
+        # SAVE DATABASE
+        # =========================
         async with db_pool.acquire() as conn:
 
-            # =========================
-            # SAVE META
-            # =========================
             await conn.execute(
                 """
-                INSERT INTO codes(code, owner_id, total_media, total_size)
+                INSERT INTO codes(
+                    code,
+                    owner_id,
+                    total_media,
+                    total_size
+                )
                 VALUES($1,$2,$3,$4)
                 """,
                 code,
@@ -1269,54 +1496,71 @@ async def done(call: CallbackQuery):
                 total_size
             )
 
-            # =========================
-            # SAVE FILE_ID DIRECT (NO CHANNEL DB)
-            # =========================
-            for m in s["items"]:
+            rows = []
 
-                file_id = m.get("file_id")
-                file_type = m.get("type")
-                size = m.get("size", 0)
+            for item in s["items"]:
 
-                if not file_id or not file_type:
-                    continue
-
-                saved_items.append(
-                    (code, file_id, file_type, size)
+                rows.append(
+                    (
+                        code,
+                        item["file_id"],
+                        item["type"],
+                        item["size"]
+                    )
                 )
 
-            # =========================
-            # SAVE MEDIA INDEX
-            # =========================
-            if saved_items:
+            if rows:
+
                 await conn.executemany(
                     """
-                    INSERT INTO medias(code, file_id, file_type, file_size)
+                    INSERT INTO medias(
+                        code,
+                        file_id,
+                        file_type,
+                        file_size
+                    )
                     VALUES($1,$2,$3,$4)
                     """,
-                    saved_items
+                    rows
                 )
 
         # =========================
-        # FINAL RESPONSE
+        # SUCCESS PANEL
         # =========================
         await call.message.edit_text(
-            "💀 UPLOAD COMPLETE\n\n"
-            f"😏 CODE: <code>{code}</code>\n\n"
-            f"📦 Total File : {total_items}\n"
-            f"💾 Size      : {round(total_size / (1024 * 1024), 2)} MB\n\n"
-            "📦 File berhasil disimpan 😏\n"
-            "🤖 Bot: xywukaibot",
+            f"""
+✅ <b>Done Complete</b>
+
+🔑 <b>Code :</b>
+<code>{code}</code>
+
+📁 <b>Total Media :</b> {total_items}
+💾 <b>Total Size :</b> {round(total_size / (1024 * 1024), 2)} MB
+
+💰 <b>Price Media :</b> {price_text}
+📡 <b>Sistem Media :</b> {media_system_text}
+👤 <b>Create By :</b> {creator}
+
+🚀 <b>Media berhasil disimpan</b>
+            """,
             parse_mode="HTML"
         )
 
     except Exception as e:
-        print("DONE ERROR:", e)
-        await call.message.edit_text("❌ Gagal proses upload")
+
+        print("SAVE ERROR:", e)
+
+        try:
+            await call.message.edit_text(
+                "❌ Gagal proses upload"
+            )
+        except Exception:
+            pass
 
     finally:
+
         # =========================
-        # CLEAN SESSION (WAJIB AMAN)
+        # CLEAN SESSION
         # =========================
         upload_sessions.pop(user_id, None)
         user_states.pop(user_id, None)
@@ -1330,15 +1574,48 @@ async def done(call: CallbackQuery):
 async def cancel(call: CallbackQuery):
 
     user_id = call.from_user.id
+    username = call.from_user.username or "No Username"
 
+    # =========================
+    # CLEAN SESSION
+    # =========================
     upload_sessions.pop(user_id, None)
     user_states.pop(user_id, None)
     last_edit_time.pop(user_id, None)
 
     try:
-        await call.message.edit_text("❌ Upload dibatalkan")
-    except:
-        pass
+
+        # =========================
+        # BUILD DASHBOARD
+        # =========================
+        text, keyboard = await build_dashboard(
+            user_id,
+            username
+        )
+
+        # =========================
+        # RETURN TO HOME
+        # =========================
+        await call.message.edit_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
+
+    except Exception as e:
+
+        print("CANCEL ERROR:", e)
+
+        try:
+            await call.message.answer(
+                "🏠 Upload dibatalkan."
+            )
+        except Exception:
+            pass
+
+    await call.answer(
+        "❌ Upload dibatalkan"
+    )
 # =========================
 # GLOBAL
 # =========================
