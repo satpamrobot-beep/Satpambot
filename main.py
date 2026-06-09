@@ -884,21 +884,23 @@ async def wd_provider(call: CallbackQuery):
 # STEP 4 - HANDLE INPUT
 # =========================
 
-@router.message(F.text)
+@router.message(
+    F.text,
+    lambda message: user_states.get(
+        message.from_user.id, {}
+    ).get("mode") == "wd_input"
+)
 async def wd_input(message: Message):
 
-    print("="*50)
+    print("=" * 50)
     print("WD_INPUT KEPANGGIL")
     print("USER:", message.from_user.id)
     print("STATE:", user_states.get(message.from_user.id))
     print("TEXT:", message.text)
-    print("="*50)
+    print("=" * 50)
 
     user_id = message.from_user.id
     state = user_states.get(user_id)
-
-    if not state or state.get("mode") != "wd_input":
-        return
 
     try:
         text = message.text.strip().replace("\n", " ")
@@ -915,28 +917,33 @@ async def wd_input(message: Message):
         nama, nomor = parts
 
         async with db_pool.acquire() as conn:
-            await conn.execute("""
+            await conn.execute(
+                """
                 UPDATE users
                 SET wd_method=$1,
                     wd_provider=$2,
                     wd_name=$3,
                     wd_number=$4
                 WHERE user_id=$5
-            """,
-            state["type"],
-            state["provider"],
-            nama,
-            nomor,
-            user_id
+                """,
+                state["type"],
+                state["provider"],
+                nama,
+                nomor,
+                user_id
             )
 
         user_states.pop(user_id, None)
 
-        await message.answer("✅ Data withdraw berhasil disimpan")
+        await message.answer(
+            "✅ Data withdraw berhasil disimpan"
+        )
 
     except Exception as e:
         print("WD INPUT ERROR:", repr(e))
-        await message.answer("❌ Gagal simpan data")
+        await message.answer(
+            "❌ Gagal simpan data"
+        )
 
 
 # =========================
@@ -1355,12 +1362,12 @@ async def set_price(message: Message):
 
     user_id = message.from_user.id
 
-    print("="*50)
+    print("=" * 50)
     print("SET_PRICE KEPANGGIL")
     print("USER:", user_id)
     print("STATE:", user_states.get(user_id))
     print("TEXT:", message.text)
-    print("="*50)
+    print("=" * 50)
 
     state = user_states.get(user_id)
 
@@ -1382,17 +1389,37 @@ async def set_price(message: Message):
             "❌ Session upload hilang.\nSilakan upload ulang."
         )
 
-    text = message.text.strip()
+    text = (
+        message.text.strip()
+        .replace(".", "")
+        .replace(",", "")
+        .replace(" ", "")
+    )
 
-    print("TEXT =", text)
+    print("TEXT CLEAN =", text)
 
     if not text.isdigit():
         print("BUKAN ANGKA")
-        return await message.answer("❌ Harga harus angka")
+        return await message.answer(
+            "❌ Harga harus berupa angka.\n\n"
+            "Contoh:\n"
+            "2000\n"
+            "2.000\n"
+            "20000"
+        )
 
-    price = int(text)
+    try:
+        price = int(text)
+    except ValueError:
+        print("GAGAL KONVERSI")
+        return await message.answer("❌ Format harga tidak valid")
 
     print("PRICE =", price)
+
+    if price < 1000:
+        return await message.answer(
+            "❌ Minimal harga Rp 1.000"
+        )
 
     session["price"] = price
 
@@ -1402,13 +1429,20 @@ async def set_price(message: Message):
 
     print("MODE DIUBAH")
 
-    await message.answer(
-        f"💰 Harga diset Rp {price:,}\n\n"
-        "Pilih sistem media:",
-        reply_markup=media_system_kb()
-    )
+    try:
+        await message.answer(
+            f"💰 Harga diset Rp {price:,}".replace(",", ".") +
+            "\n\nPilih sistem media:",
+            reply_markup=media_system_kb()
+        )
 
-    print("PESAN TERKIRIM")
+        print("PESAN TERKIRIM")
+
+    except Exception as e:
+        print("SET_PRICE ERROR:", repr(e))
+        await message.answer(
+            "❌ Gagal menampilkan pilihan media"
+        )
 # =========================
 # MEDIA SYSTEM
 # =========================
