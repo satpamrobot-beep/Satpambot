@@ -15,7 +15,7 @@ import hmac
 import uvicorn
 import httpx
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, Request, HTTPException
 from collections import defaultdict
 from dotenv import load_dotenv
@@ -34,6 +34,57 @@ from aiogram.types import (
 )
 
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
+
+# =========================
+# TIMEZONE (GLOBAL)
+# =========================
+
+WIB = timezone(timedelta(hours=7))
+
+def now_wib():
+    return datetime.now(WIB)
+
+# =========================
+# WITHDRAW STATUS LOGIC
+# =========================
+
+def wd_status():
+    now = now_wib()
+    weekday = now.weekday()
+    hour = now.hour
+
+    OPEN = 9
+    CLOSE = 20
+
+    # weekend (Sabtu-Minggu)
+    if weekday >= 5:
+        days_to_monday = 7 - weekday
+        next_open = (now + timedelta(days=days_to_monday)).replace(hour=OPEN, minute=0, second=0)
+        diff = next_open - now
+
+        return False, next_open, f"⛔ WEEKEND CLOSED\n🕘 Buka lagi dalam {diff.days} hari {diff.seconds//3600} jam"
+
+    # before open
+    if hour < OPEN:
+        next_open = now.replace(hour=OPEN, minute=0, second=0)
+        diff = next_open - now
+        return False, next_open, f"⏳ Akan buka dalam {diff.seconds//3600} jam {diff.seconds%3600//60} menit"
+
+    # after close
+    if hour >= CLOSE:
+        next_open = (now + timedelta(days=1)).replace(hour=OPEN, minute=0, second=0)
+
+        while next_open.weekday() >= 5:
+            next_open += timedelta(days=1)
+
+        diff = next_open - now
+        return False, next_open, f"⛔ CLOSED\n🕘 Buka lagi dalam {diff.seconds//3600} jam {diff.seconds%3600//60} menit"
+
+    # OPEN
+    close_time = now.replace(hour=CLOSE, minute=0, second=0)
+    diff = close_time - now
+
+    return True, close_time, f"🟢 OPEN\n⏳ Tutup dalam {diff.seconds//3600} jam {diff.seconds%3600//60} menit"
 
 # =========================
 # CONFIG
@@ -696,21 +747,6 @@ CRYPTO = [
 ]
 
 # =========================
-# AUTO OPEN / CLOSE SYSTEM
-# =========================
-
-def is_withdraw_open():
-    now = datetime.now()
-    weekday = now.weekday()
-
-    # Senin & Jumat 09 - 20
-    if weekday in [0, 4]:
-        return 9 <= now.hour < 20
-
-    return False
-
-
-# =========================
 # MAIN PAGE WITHDRAW
 # =========================
 
@@ -734,8 +770,15 @@ async def withdraw_page(call: CallbackQuery):
                 FROM users WHERE user_id=$1
             """, user_id)
 
+        # 🔒 safety check
+        if not row:
+            return await call.message.edit_text("❌ User tidak ditemukan")
+
         balance = row["balance"] or 0
-        status = "🟢 OPEN" if is_withdraw_open() else "🔴 CLOSED"
+
+        # 🔥 pakai WD system terbaru (WIB + schedule)
+        open_status, _, _ = wd_status()
+        status = "🟢 OPEN" if open_status else "🔴 CLOSED"
 
         method = row["wd_method"] or "BELUM SET"
         provider = row["wd_provider"] or "-"
@@ -744,7 +787,7 @@ async def withdraw_page(call: CallbackQuery):
 
         text = (
             "💸 <b>WITHDRAW CENTER</b>\n\n"
-            f"💰 Saldo Anda: <b>Rp {balance:,}</b>\n"
+            f"💰 Saldo Anda: <b>Rp {balance:,}".replace(",", ".") + "</b>\n"
             f"⏰ Status Sistem: <b>{status}</b>\n\n"
             "━━━━━━━━━━━━━━\n"
             "🏦 <b>DATA WITHDRAW</b>\n"
@@ -753,25 +796,37 @@ async def withdraw_page(call: CallbackQuery):
             f"• Nama     : {name}\n"
             f"• Nomor    : {number}\n"
             "━━━━━━━━━━━━━━\n\n"
-            f"📌 Minimal Withdraw: Rp {MIN_WITHDRAW:,}\n"
-            f"📌 Maksimal Withdraw: Rp {MAX_WITHDRAW:,}\n\n"
+            f"📌 Minimal Withdraw: Rp {MIN_WITHDRAW:,}".replace(",", ".") + "\n"
+            f"📌 Maksimal Withdraw: Rp {MAX_WITHDRAW:,}".replace(",", ".") + "\n\n"
             "🕘 Jadwal:\n"
-            "• Senin & Jumat: 09:00 - 20:00\n"
-            "• Sabtu & Minggu: TUTUP"
+            "• Senin - Jumat: 09:00 - 20:00\n"
+            "• Sabtu - Minggu: TUTUP"
         )
 
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💸 REQUEST WITHDRAW", callback_data="wd_request")],
-            [InlineKeyboardButton(text="⚙️ ATUR BANK / EWALLET", callback_data="wd_settings")],
-            [InlineKeyboardButton(text="🔙 KEMBALI", callback_data="home")]
+            [InlineKeyboardButton(
+                text="💸 REQUEST WITHDRAW",
+                callback_data="wd_request"
+            )],
+            [InlineKeyboardButton(
+                text="⚙️ ATUR BANK / EWALLET",
+                callback_data="wd_settings"
+            )],
+            [InlineKeyboardButton(
+                text="🔙 KEMBALI",
+                callback_data="home"
+            )]
         ])
 
-        await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        await call.message.edit_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=kb
+        )
 
     except Exception as e:
         print("WITHDRAW ERROR:", repr(e))
         await call.message.edit_text("❌ Gagal load withdraw")
-
 
 # =========================
 # STEP 1 - PILIH JENIS
@@ -955,8 +1010,14 @@ async def wd_request(call: CallbackQuery):
 
     user_id = call.from_user.id
 
-    if not is_withdraw_open():
-        return await call.answer("🔴 Withdraw sedang TUTUP", show_alert=True)
+    # 🔥 FIX: pakai wd_status yang sudah ada
+    open_status, _, _ = wd_status()
+
+    if not open_status:
+        return await call.answer(
+            "🔴 Withdraw sedang TUTUP",
+            show_alert=True
+        )
 
     async with db_pool.acquire() as conn:
 
@@ -969,27 +1030,47 @@ async def wd_request(call: CallbackQuery):
     if not row:
         return await call.answer("❌ User tidak ditemukan", show_alert=True)
 
-    if not row["wd_method"]:
-        return await call.answer("⚠️ Silakan atur rekening dulu", show_alert=True)
+    # 🔥 safety fallback (biar gak None error)
+    wd_method = row["wd_method"] or ""
+    wd_provider = row["wd_provider"] or "-"
+    wd_name = row["wd_name"] or "-"
+    wd_number = row["wd_number"] or "-"
+
+    if not wd_method:
+        return await call.answer(
+            "⚠️ Silakan atur rekening dulu",
+            show_alert=True
+        )
 
     if row["balance"] < MIN_WITHDRAW:
-        return await call.answer("❌ Saldo kurang", show_alert=True)
+        return await call.answer(
+            "❌ Saldo kurang",
+            show_alert=True
+        )
 
     await call.message.edit_text(
         "💸 <b>WITHDRAW CONFIRMATION</b>\n\n"
         f"💰 Saldo: Rp {row['balance']:,}\n"
-        f"🏦 {row['wd_method']} ({row['wd_provider']})\n"
-        f"👤 {row['wd_name']}\n"
-        f"📌 {row['wd_number']}\n\n"
+        f"🏦 {wd_method} ({wd_provider})\n"
+        f"👤 {wd_name}\n"
+        f"📌 {wd_number}\n\n"
         "⚠️ Setelah lanjut, saldo akan diproses",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🚀 PROSES WITHDRAW", callback_data="wd_confirm")],
-            [InlineKeyboardButton(text="🔙 BACK", callback_data="withdraw")]
+            [
+                InlineKeyboardButton(
+                    text="🚀 PROSES WITHDRAW",
+                    callback_data="wd_confirm"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔙 BACK",
+                    callback_data="withdraw"
+                )
+            ]
         ])
     )
-
-
 # =========================
 # EXECUTE WITHDRAW
 # =========================
@@ -1013,29 +1094,37 @@ async def wd_confirm(call: CallbackQuery):
         if row["balance"] < MIN_WITHDRAW:
             return await call.answer("❌ Saldo kurang", show_alert=True)
 
+        if not row["wd_method"] or not row["wd_name"] or not row["wd_number"]:
+            return await call.answer("❌ Data withdraw belum lengkap", show_alert=True)
+
         amount = row["balance"]
-        external_id = f"WD-{user_id}-{int(time.time())}"
 
         await conn.execute("""
             INSERT INTO withdraws(
-                user_id, amount, method,
-                account_name, account_number,
+                user_id,
+                amount,
+                fee,
+                net_amount,
+                method,
+                account_name,
+                account_number,
                 status
             )
-            VALUES($1,$2,$3,$4,$5,'pending')
+            VALUES($1,$2,0,$2,$3,$4,$5,'pending')
         """,
         user_id,
         amount,
         row["wd_method"],
-        row["wd_provider"],
         row["wd_name"],
-        row["wd_number"],
-        external_id
+        row["wd_number"]
         )
 
         await conn.execute("""
-            UPDATE users SET balance=0 WHERE user_id=$1
-        """, user_id)
+            UPDATE users
+            SET balance = 0,
+                total_withdraw = COALESCE(total_withdraw,0) + $1
+            WHERE user_id=$2
+        """, amount, user_id)
 
     await call.message.edit_text(
         "⏳ <b>WITHDRAW PENDING</b>\n\n"
@@ -1146,35 +1235,30 @@ async def handle_media(message: Message):
     state = user_states.get(user_id)
     s = upload_sessions.get(user_id)
 
-    # =========================
-    # VALIDATION
-    # =========================
     if not state or state.get("mode") != "upload":
         return
 
     if not s:
         return
 
-    # =========================
-    # LIMITS
-    # =========================
-    MAX_MEDIA = 100
-    MAX_TOTAL_SIZE = 2 * 1024 * 1024 * 1024  # 2GB
+    # FORCE SAFE DEFAULT
+    s.setdefault("items", [])
+    s.setdefault("photo", 0)
+    s.setdefault("video", 0)
+    s.setdefault("document", 0)
 
-    # =========================
-    # DETECT FILE
-    # =========================
+    MAX_MEDIA = 100
+    MAX_TOTAL_SIZE = 2 * 1024 * 1024 * 1024
+
     file_obj = None
     file_type = None
 
     if message.photo:
         file_obj = message.photo[-1]
         file_type = "photo"
-
     elif message.video:
         file_obj = message.video
         file_type = "video"
-
     elif message.document:
         file_obj = message.document
         file_type = "document"
@@ -1185,67 +1269,37 @@ async def handle_media(message: Message):
     file_id = file_obj.file_id
     file_size = getattr(file_obj, "file_size", 0) or 0
 
-    # =========================
-    # MEDIA LIMIT
-    # =========================
     if len(s["items"]) >= MAX_MEDIA:
-
         try:
             await message.delete()
-        except Exception:
+        except:
             pass
-
         return
 
-    # =========================
-    # SIZE LIMIT
-    # =========================
-    current_size = sum(
-        item.get("size", 0)
-        for item in s["items"]
-    )
+    current_size = sum(x.get("size", 0) for x in s["items"])
 
     if current_size + file_size > MAX_TOTAL_SIZE:
-
         try:
             await message.delete()
-        except Exception:
+        except:
             pass
-
         return
 
-    # =========================
-    # COUNTER
-    # =========================
-    if file_type == "photo":
-        s["photo"] += 1
+    # COUNTER SAFE
+    s[file_type] += 1
 
-    elif file_type == "video":
-        s["video"] += 1
-
-    elif file_type == "document":
-        s["document"] += 1
-
-    # =========================
-    # SAVE SESSION
-    # =========================
+    # SAVE
     s["items"].append({
         "file_id": file_id,
         "type": file_type,
         "size": file_size
     })
 
-    # =========================
-    # DELETE USER MESSAGE
-    # =========================
     try:
         await message.delete()
-    except Exception:
+    except:
         pass
 
-    # =========================
-    # EDIT THROTTLE
-    # =========================
     now = time.time()
 
     if now - last_edit_time.get(user_id, 0) < 1.5:
@@ -1253,33 +1307,13 @@ async def handle_media(message: Message):
 
     last_edit_time[user_id] = now
 
-    # =========================
-    # STATS
-    # =========================
     total = len(s["items"])
+    total_size = sum(x.get("size", 0) for x in s["items"])
+    size_mb = round(total_size / (1024 * 1024), 2)
 
-    total_size = sum(
-        item.get("size", 0)
-        for item in s["items"]
-    )
+    progress = min(100, int((total / MAX_MEDIA) * 100))
 
-    size_mb = round(
-        total_size / (1024 * 1024),
-        2
-    )
-
-    progress = min(
-        100,
-        int((total / MAX_MEDIA) * 100)
-    )
-
-    bar_length = 10
-    filled = int(progress / 10)
-
-    bar = (
-        "█" * filled +
-        "░" * (bar_length - filled)
-    )
+    bar = "█" * (progress // 10) + "░" * (10 - (progress // 10))
 
     text = (
         "📤 <b>UPLOAD MODE</b>\n\n"
@@ -1293,11 +1327,7 @@ async def handle_media(message: Message):
         "✅ Tekan DONE jika selesai"
     )
 
-    # =========================
-    # UPDATE PANEL
-    # =========================
     try:
-
         await safe_send(
             message.bot.edit_message_text,
             chat_id=message.chat.id,
@@ -1306,14 +1336,9 @@ async def handle_media(message: Message):
             parse_mode="HTML",
             reply_markup=upload_kb()
         )
-
     except Exception as e:
         print("UPLOAD PANEL ERROR:", e)
-        
-# =========================
-# GENERATE CODE
-# =========================
-
+    
 # =========================
 # GENERATE CODE
 # =========================
@@ -1452,7 +1477,10 @@ async def price_free(call: CallbackQuery):
 # SET PRICE
 # =========================
 
-@router.message(F.text)
+@router.message(
+    F.text,
+    lambda m: user_states.get(m.from_user.id, {}).get("mode") == "set_price"
+)
 async def set_price(message: Message):
 
     user_id = message.from_user.id
@@ -2213,10 +2241,22 @@ async def noop(call: CallbackQuery):
 async def start_get(call: CallbackQuery):
 
     user_id = call.from_user.id
+    state = user_states.get(user_id, {})
 
+    # kalau sedang upload → jangan ganggu
+    if state.get("mode") == "upload":
+        return await call.answer(
+            "❌ Selesaikan upload dulu",
+            show_alert=True
+        )
+
+    # reset semua state yang konflik
     user_states[user_id] = {
-        "mode": "getfile"
+        "mode": "getfile",
+        "step": "input_code"
     }
+
+    upload_sessions.pop(user_id, None)
 
     await call.message.edit_text(
         "📥 Kirim CODE 😏"
@@ -2239,7 +2279,7 @@ async def receive_code(message: Message):
         return await message.answer("⏳ Jangan spam")
 
     codes = re.findall(
-        r"decodefilebot_\d+v_\d+p_\d+d_[a-f0-9]{12}",
+        r"bluebirdbot_\d+v_\d+p_\d+d_[a-f0-9]{12}",
         message.text or ""
     )
 
