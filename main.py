@@ -887,6 +887,13 @@ async def wd_provider(call: CallbackQuery):
 @router.message(F.text)
 async def wd_input(message: Message):
 
+    print("="*50)
+    print("WD_INPUT KEPANGGIL")
+    print("USER:", message.from_user.id)
+    print("STATE:", user_states.get(message.from_user.id))
+    print("TEXT:", message.text)
+    print("="*50)
+
     user_id = message.from_user.id
     state = user_states.get(user_id)
 
@@ -1346,20 +1353,21 @@ async def done(call: CallbackQuery):
 @router.message(F.text)
 async def set_price(message: Message):
 
-    print("SET_PRICE KEPANGGIL")
-
     user_id = message.from_user.id
+
+    print("="*50)
+    print("SET_PRICE KEPANGGIL")
+    print("USER:", user_id)
+    print("STATE:", user_states.get(user_id))
+    print("TEXT:", message.text)
+    print("="*50)
 
     state = user_states.get(user_id)
 
-    print("STATE =", state)
-
     if not state:
-        print("STATE NONE")
         return
 
     if state.get("mode") != "set_price":
-        print("MODE BUKAN SET_PRICE:", state.get("mode"))
         return
 
     print("LOLOS MODE")
