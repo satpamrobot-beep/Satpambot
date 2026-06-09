@@ -1064,23 +1064,6 @@ def upload_kb():
         ]
     )
 
-def media_system_kb():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="✅ Share File",
-                    callback_data="media_share"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="❌ No Share",
-                    callback_data="media_noshare"
-                )
-            ]
-        ]
-    )
 # =========================
 # UP FILE CALLBACK
 # =========================
@@ -1343,6 +1326,29 @@ def generate_code(v, p, d):
     rand = hashlib.sha1(base.encode()).hexdigest()[:12]
 
     return f"bluebirdbot_{v}v_{p}p_{d}d_{rand}"
+
+
+# =========================
+# PRICE TYPE KB
+# =========================
+
+def price_type_kb():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💰 Berbayar",
+                    callback_data="price_paid"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🆓 Gratis",
+                    callback_data="price_free"
+                )
+            ]
+        ]
+    )
 
 
 # =========================
