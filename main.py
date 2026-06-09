@@ -1539,7 +1539,7 @@ async def price_free(call: CallbackQuery):
     F.text,
     lambda m: user_states.get(m.from_user.id, {}).get("mode") == "set_price"
 )
-async def set_price(message: Message):
+async def handle_price_input(message: Message):
 
     user_id = message.from_user.id
 
