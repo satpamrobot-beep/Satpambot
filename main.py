@@ -1045,20 +1045,42 @@ async def wd_confirm(call: CallbackQuery):
     )
         
 # =========================
-# UP FILE INIT
+# KEYBOARD
 # =========================
 
 def upload_kb():
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="✅ DONE", callback_data="upload_done"),
-                InlineKeyboardButton(text="❌ CANCEL", callback_data="upload_cancel")
+                InlineKeyboardButton(
+                    text="✅ DONE",
+                    callback_data="upload_done"
+                ),
+                InlineKeyboardButton(
+                    text="❌ CANCEL",
+                    callback_data="upload_cancel"
+                )
             ]
         ]
     )
 
-
+def media_system_kb():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Share File",
+                    callback_data="media_share"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="❌ No Share",
+                    callback_data="media_noshare"
+                )
+            ]
+        ]
+    )
 # =========================
 # UP FILE CALLBACK
 # =========================
