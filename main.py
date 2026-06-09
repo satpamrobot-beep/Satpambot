@@ -1346,57 +1346,61 @@ async def done(call: CallbackQuery):
 @router.message(F.text)
 async def set_price(message: Message):
 
+    print("SET_PRICE KEPANGGIL")
+
     user_id = message.from_user.id
 
     state = user_states.get(user_id)
 
+    print("STATE =", state)
+
     if not state:
+        print("STATE NONE")
         return
 
     if state.get("mode") != "set_price":
+        print("MODE BUKAN SET_PRICE:", state.get("mode"))
         return
+
+    print("LOLOS MODE")
 
     session = upload_sessions.get(user_id)
 
+    print("SESSION =", session)
+
     if not session:
+        print("SESSION HILANG")
         return await message.answer(
             "❌ Session upload hilang.\nSilakan upload ulang."
         )
 
     text = message.text.strip()
 
+    print("TEXT =", text)
+
     if not text.isdigit():
-        return await message.answer(
-            "❌ Harga harus angka"
-        )
+        print("BUKAN ANGKA")
+        return await message.answer("❌ Harga harus angka")
 
     price = int(text)
 
-    if price < 1000:
-        return await message.answer(
-            "❌ Minimal Rp1.000"
-        )
-
-    if price > 100000:
-        return await message.answer(
-            "❌ Maksimal Rp100.000"
-        )
+    print("PRICE =", price)
 
     session["price"] = price
 
+    print("PRICE TERSIMPAN")
+
     user_states[user_id]["mode"] = "set_media_system"
 
-    try:
-        await message.answer(
-            f"💰 Harga diset Rp {price:,}\n\n"
-            "Pilih sistem media:",
-            reply_markup=media_system_kb()
-        )
-    except Exception as e:
-        print("SET PRICE ERROR:", repr(e))
-        await message.answer(
-            "❌ Gagal membuka menu sistem media"
-        )
+    print("MODE DIUBAH")
+
+    await message.answer(
+        f"💰 Harga diset Rp {price:,}\n\n"
+        "Pilih sistem media:",
+        reply_markup=media_system_kb()
+    )
+
+    print("PESAN TERKIRIM")
 # =========================
 # MEDIA SYSTEM
 # =========================
