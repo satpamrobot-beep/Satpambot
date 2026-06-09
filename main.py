@@ -1045,22 +1045,26 @@ def upload_kb():
     )
 
 
-@router.message(F.text == "upfile")
-async def up_file(message: Message):
+# =========================
+# UP FILE CALLBACK
+# =========================
 
-    user_id = message.from_user.id
+@router.callback_query(F.data == "upfile")
+async def up_file(call: CallbackQuery):
+
+    user_id = call.from_user.id
 
     # =========================
     # ANTI SPAM
     # =========================
     if not user_limit(user_id):
-        return await safe_send(
-            message.answer,
-            "⏳ Jangan spam ya 😏"
+        return await call.answer(
+            "⏳ Jangan spam ya 😏",
+            show_alert=True
         )
 
     # =========================
-    # RESET SESSION LAMA
+    # RESET SESSION
     # =========================
     upload_sessions.pop(user_id, None)
     user_states.pop(user_id, None)
@@ -1078,14 +1082,13 @@ async def up_file(message: Message):
         "photo": 0,
         "document": 0,
         "items": [],
-        "msg_id": None
+        "msg_id": call.message.message_id
     }
 
     # =========================
-    # SEND PANEL
+    # EDIT PANEL
     # =========================
-    msg = await safe_send(
-        message.answer,
+    await call.message.edit_text(
         "📤 UPLOAD MODE AKTIF\n\n"
         "😏 Kirim file kamu sekarang.\n"
         "Tekan DONE kalau sudah.\n\n"
@@ -1093,19 +1096,7 @@ async def up_file(message: Message):
         reply_markup=upload_kb()
     )
 
-    # =========================
-    # VALIDASI MESSAGE
-    # =========================
-    if not msg:
-        upload_sessions.pop(user_id, None)
-        user_states.pop(user_id, None)
-
-        return
-
-    # =========================
-    # SAVE PANEL ID
-    # =========================
-    upload_sessions[user_id]["msg_id"] = msg.message_id
+    await call.answer()
 # =========================
 # MEDIA HANDLER (FINAL CLEAN)
 # =========================
@@ -1801,15 +1792,20 @@ async def noop(call: CallbackQuery):
 # =========================
 # START GET FILE
 # =========================
-@router.message(F.text == "📥 Getfile")
-async def start_get(message: Message):
+@router.callback_query(F.data == "getfile")
+async def start_get(call: CallbackQuery):
 
-    user_id = message.from_user.id
-    user_states[user_id] = {"mode": "getfile"}
+    user_id = call.from_user.id
 
-    await message.answer("📥 Kirim CODE 😏")
+    user_states[user_id] = {
+        "mode": "getfile"
+    }
 
+    await call.message.edit_text(
+        "📥 Kirim CODE 😏"
+    )
 
+    await call.answer()
 # =========================
 # RECEIVE CODE
 # =========================
