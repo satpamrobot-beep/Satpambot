@@ -432,8 +432,6 @@ async def start(message: Message, bot: Bot):
         ],
     ])
 
-    await message.answer(text, reply_markup=keyboard)
-
     # =========================
     # SEND DASHBOARD
     # =========================
