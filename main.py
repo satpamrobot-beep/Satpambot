@@ -1350,15 +1350,27 @@ async def set_price(message: Message):
 
     state = user_states.get(user_id)
 
-    if not state or state.get("mode") != "set_price":
+    if not state:
         return
 
-    if not message.text.isdigit():
+    if state.get("mode") != "set_price":
+        return
+
+    session = upload_sessions.get(user_id)
+
+    if not session:
+        return await message.answer(
+            "❌ Session upload hilang.\nSilakan upload ulang."
+        )
+
+    text = message.text.strip()
+
+    if not text.isdigit():
         return await message.answer(
             "❌ Harga harus angka"
         )
 
-    price = int(message.text)
+    price = int(text)
 
     if price < 1000:
         return await message.answer(
@@ -1370,19 +1382,21 @@ async def set_price(message: Message):
             "❌ Maksimal Rp100.000"
         )
 
-    upload_sessions[user_id]["price"] = price
+    session["price"] = price
 
-    user_states[user_id] = {
-        "mode": "set_media_system"
-    }
+    user_states[user_id]["mode"] = "set_media_system"
 
-    await message.answer(
-        f"💰 Harga diset Rp {price:,}\n\n"
-        "Pilih sistem media:",
-        reply_markup=media_system_kb()
-    )
-
-
+    try:
+        await message.answer(
+            f"💰 Harga diset Rp {price:,}\n\n"
+            "Pilih sistem media:",
+            reply_markup=media_system_kb()
+        )
+    except Exception as e:
+        print("SET PRICE ERROR:", repr(e))
+        await message.answer(
+            "❌ Gagal membuka menu sistem media"
+        )
 # =========================
 # MEDIA SYSTEM
 # =========================
