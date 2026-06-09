@@ -14,6 +14,7 @@ import hashlib
 import hmac
 import uvicorn
 import httpx
+from aiogram import Router
 
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, Request, HTTPException
@@ -154,7 +155,7 @@ async def live_withdraw_panel(message, user_id):
 # =========================
 # CALLBACK TRIGGER LIVE
 # =========================
-@router.callback_query(F.data == "wd_live")
+@dp.callback_query(F.data == "wd_live")
 async def wd_live(call: CallbackQuery):
     await call.answer()
 
