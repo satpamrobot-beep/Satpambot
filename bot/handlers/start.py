@@ -64,7 +64,7 @@ async def is_joined(bot, user_id: int) -> bool:
 # =========================
 def format_dashboard(user, idr, usd):
     return (
-        "🐧 <b>Bluebird Cede Earn</b>\n"
+        "🐧 <b>Bluebird Earncode</b>\n"
         "━━━━━━━━━━━━━━━━━━\n"
         f"👤 Id Account : <code>{user.id}</code>\n"
         f"📛 Username   : @{user.username if user.username else '-'}\n"
