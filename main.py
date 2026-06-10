@@ -1044,15 +1044,68 @@ def confirm_kb():
             ]
         ]
     )
+def share_kb():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🌍 PUBLIC",
+                    callback_data="share_yes"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔒 PRIVATE",
+                    callback_data="share_no"
+                )
+            ]
+        ]
+    )
 
 
 # =========================
-# CODE GEN
+# UNIQUE CODE GEN
 # =========================
-def generate_code(v, p, d):
-    rand = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
-    return f"bluebirdbot_{v}v_{p}p_{d}d_{rand}"
+async def generate_unique_code(
+    v: int,
+    p: int,
+    d: int
+):
 
+    while True:
+
+        code = (
+            f"bb_"
+            f"{v}v_"
+            f"{p}p_"
+            f"{d}d_"
+            f"{secrets.token_hex(4)}"
+        )
+
+        try:
+
+            result = (
+                supabase.table("uploads")
+                .select("code")
+                .eq("code", code)
+                .limit(1)
+                .execute()
+            )
+
+            if not result.data:
+                return code
+
+        except Exception as e:
+
+            print(
+                "CODE CHECK ERROR:",
+                repr(e)
+            )
+
+            return (
+                f"bb_"
+                f"{secrets.token_hex(8)}"
+            )
 
 # =========================
 # START UPFILE
@@ -1096,140 +1149,186 @@ async def media_handler(message: Message):
         return
 
     s = upload_sessions.get(uid)
+
     if not s:
         return
 
-    file = (
-        message.photo[-1]
-        if message.photo
-        else message.video
-        if message.video
-        else message.document
-    )
-
-    ftype = (
-        "photo"
-        if message.photo
-        else "video"
-        if message.video
-        else "document"
-    )
-
-    size = getattr(file, "file_size", 0)
-
-    # =========================
-    # LIMIT CHECK
-    # =========================
-    if len(s["items"]) >= MAX_MEDIA:
-        try:
-            await message.delete()
-        except:
-            pass
-        return
-
-    current_size = sum(x["size"] for x in s["items"])
-
-    if current_size + size > MAX_SIZE:
-        try:
-            await message.delete()
-        except:
-            pass
-        return
-
-    # =========================
-    # SAVE MEDIA
-    # =========================
-    s[ftype] += 1
-
-    s["items"].append({
-        "file_id": file.file_id,
-        "type": ftype,
-        "size": size
-    })
-
-    # DEBUG
-    print(
-        f"UPLOAD {uid} | "
-        f"{ftype} | "
-        f"TOTAL={len(s['items'])}"
-    )
-
-    # =========================
-    # BUILD PROGRESS
-    # =========================
-    v = s["video"]
-    p = s["photo"]
-    d = s["document"]
-
-    total = len(s["items"])
-
-    progress = min(
-        int((total / MAX_MEDIA) * 100),
-        100
-    )
-
-    filled = progress // 10
-
-    bar = (
-        "█" * filled +
-        "░" * (10 - filled)
-    )
-
-    size_mb = round(
-        sum(x["size"] for x in s["items"])
-        / 1024 / 1024,
-        2
-    )
-
-    text = (
-        "📤 UPLOAD PROGRESS\n\n"
-        f"{bar} {progress}%\n"
-        f"🎬 {v} | 🖼 {p} | 📄 {d}\n"
-        f"📦 Total: {total}\n"
-        f"💾 {size_mb} MB"
-    )
-
-    # =========================
-    # THROTTLE EDIT MESSAGE
-    # =========================
-    now = time.time()
-
-    if now - last_edit_time.get(uid, 0) >= 1.2:
-
-        last_edit_time[uid] = now
-
-        try:
-            await message.bot.edit_message_text(
-                chat_id=message.chat.id,
-                message_id=s["msg_id"],
-                text=text,
-                reply_markup=upload_kb()
-            )
-        except Exception as e:
-            print(
-                "UPLOAD EDIT ERROR:",
-                repr(e)
-            )
-
-    # =========================
-    # DELETE USER MEDIA
-    # =========================
     try:
-        await message.delete()
-    except:
-        pass
 
+        file = (
+            message.photo[-1]
+            if message.photo
+            else message.video
+            if message.video
+            else message.document
+        )
+
+        ftype = (
+            "photo"
+            if message.photo
+            else "video"
+            if message.video
+            else "document"
+        )
+
+        size = getattr(file, "file_size", 0) or 0
+
+        # =========================
+        # LIMIT FILE COUNT
+        # =========================
+        if len(s.get("items", [])) >= MAX_MEDIA:
+
+            await message.answer(
+                f"❌ Maksimal {MAX_MEDIA} media"
+            )
+
+            try:
+                await message.delete()
+            except:
+                pass
+
+            return
+
+        # =========================
+        # LIMIT TOTAL SIZE
+        # =========================
+        current_size = sum(
+            x.get("size", 0)
+            for x in s.get("items", [])
+        )
+
+        if current_size + size > MAX_SIZE:
+
+            await message.answer(
+                "❌ Total upload melebihi batas 2 GB"
+            )
+
+            try:
+                await message.delete()
+            except:
+                pass
+
+            return
+
+        # =========================
+        # SAVE MEDIA
+        # =========================
+        s[ftype] += 1
+
+        s.setdefault("items", []).append({
+            "file_id": file.file_id,
+            "type": ftype,
+            "size": size
+        })
+
+        total = len(s["items"])
+
+        print(
+            f"UPLOAD {uid} | "
+            f"{ftype} | "
+            f"TOTAL={total}"
+        )
+
+        # =========================
+        # BUILD PROGRESS
+        # =========================
+        v = s["video"]
+        p = s["photo"]
+        d = s["document"]
+
+        progress = min(
+            int((total / MAX_MEDIA) * 100),
+            100
+        )
+
+        filled = progress // 10
+
+        bar = (
+            "█" * filled +
+            "░" * (10 - filled)
+        )
+
+        total_size = sum(
+            x["size"]
+            for x in s["items"]
+        )
+
+        size_mb = round(
+            total_size / 1024 / 1024,
+            2
+        )
+
+        text = (
+            "📤 UPLOAD PROGRESS\n\n"
+            f"{bar} {progress}%\n"
+            f"🎬 {v} | 🖼 {p} | 📄 {d}\n"
+            f"📦 Total: {total}/{MAX_MEDIA}\n"
+            f"💾 {size_mb} MB"
+        )
+
+        # =========================
+        # THROTTLE UPDATE
+        # =========================
+        now = time.time()
+
+        if (
+            now -
+            last_edit_time.get(uid, 0)
+            >= 1.2
+        ):
+
+            last_edit_time[uid] = now
+
+            try:
+                await message.bot.edit_message_text(
+                    chat_id=message.chat.id,
+                    message_id=s["msg_id"],
+                    text=text,
+                    reply_markup=upload_kb()
+                )
+            except Exception as e:
+
+                if (
+                    "message is not modified"
+                    not in str(e).lower()
+                ):
+                    print(
+                        "UPLOAD EDIT ERROR:",
+                        repr(e)
+                    )
+
+        # =========================
+        # DELETE USER MESSAGE
+        # =========================
+        try:
+            await message.delete()
+        except:
+            pass
+
+    except Exception as e:
+
+        print(
+            "MEDIA HANDLER ERROR:",
+            repr(e)
+        )
 
 # =========================
-# DONE → PRICE
+# DONE -> PRICE
 # =========================
 @router.callback_query(F.data == "upload_done")
 async def done(call: CallbackQuery):
 
     uid = call.from_user.id
+
     s = upload_sessions.get(uid)
 
-    if not s or not s["items"]:
+    if not s:
+        return await call.answer(
+            "Session tidak ditemukan",
+            show_alert=True
+        )
+
+    if not s.get("items"):
         return await call.answer(
             "Belum ada file",
             show_alert=True
@@ -1239,9 +1338,39 @@ async def done(call: CallbackQuery):
         "mode": "price"
     }
 
-    await call.message.edit_text(
-        "Pilih tipe:",
-        reply_markup=price_type_kb()
+    try:
+        await call.message.edit_text(
+            "💰 Pilih tipe upload:",
+            reply_markup=price_type_kb()
+        )
+    except Exception as e:
+        print("DONE ERROR:", repr(e))
+
+    await call.answer()
+
+
+# =========================
+# CANCEL UPLOAD
+# =========================
+@router.callback_query(F.data == "upload_cancel")
+async def upload_cancel(call: CallbackQuery):
+
+    uid = call.from_user.id
+
+    upload_sessions.pop(uid, None)
+    user_states.pop(uid, None)
+    last_edit_time.pop(uid, None)
+
+    try:
+        await call.message.edit_text(
+            "❌ Upload dibatalkan.\n\n"
+            "Semua media yang belum disimpan telah dihapus dari session."
+        )
+    except Exception as e:
+        print("CANCEL ERROR:", repr(e))
+
+    await call.answer(
+        "Upload dibatalkan"
     )
 # =========================
 # FREE
@@ -1283,39 +1412,113 @@ async def set_price(message: Message):
 
     s = upload_sessions.get(uid)
 
+    if not s:
+        return await message.answer(
+            "❌ Session expired, silakan upload ulang."
+        )
+
     try:
-        price = int(message.text)
-    except:
-        return await message.answer("Angka tidak valid")
+        price = int(message.text.strip())
+    except ValueError:
+        return await message.answer(
+            "❌ Angka tidak valid"
+        )
 
     if price < 1000:
-        return await message.answer("Minimal 1000")
+        return await message.answer(
+            "❌ Minimal 1000"
+        )
+
+    if price > 10_000_000:
+        return await message.answer(
+            "❌ Harga terlalu besar"
+        )
 
     s["price"] = price
-    user_states[uid] = {"mode": "review"}
+
+    user_states[uid] = {
+        "mode": "review"
+    }
 
     await show_review(message, uid)
 
 
 # =========================
+# SHARE YES
+# =========================
+@router.callback_query(F.data == "share_yes")
+async def share_yes(call: CallbackQuery):
+
+    uid = call.from_user.id
+
+    s = upload_sessions.get(uid)
+
+    if not s:
+        return await call.answer(
+            "Session expired",
+            show_alert=True
+        )
+
+    s["share"] = True
+
+    await call.answer("✅ Public")
+
+
+# =========================
+# SHARE NO
+# =========================
+@router.callback_query(F.data == "share_no")
+async def share_no(call: CallbackQuery):
+
+    uid = call.from_user.id
+
+    s = upload_sessions.get(uid)
+
+    if not s:
+        return await call.answer(
+            "Session expired",
+            show_alert=True
+        )
+
+    s["share"] = False
+
+    await call.answer("🔒 Private")
+# =========================
 # REVIEW
 # =========================
 async def show_review(event, uid):
 
-    s = upload_sessions[uid]
-    v, p, d = s["video"], s["photo"], s["document"]
+    s = upload_sessions.get(uid)
+
+    if not s:
+        return
+
+    v = s["video"]
+    p = s["photo"]
+    d = s["document"]
     total = len(s["items"])
 
     text = (
         f"📦 REVIEW\n\n"
-        f"🎬 {v} | 🖼 {p} | 📄 {d} (total {total})\n"
-        f"💰 Price: {s['price']}"
+        f"🎬 {v} | 🖼 {p} | 📄 {d}\n"
+        f"📁 Total: {total}\n"
+        f"💰 Price: Rp{s['price']:,}"
     )
 
     if isinstance(event, CallbackQuery):
-        await event.message.edit_text(text, reply_markup=review_kb())
-    else:
-        await event.answer(text)
+
+        await event.message.edit_text(
+            text,
+            reply_markup=confirm_kb()
+        )
+
+    elif isinstance(event, Message):
+
+        await event.answer(
+            text,
+            reply_markup=confirm_kb()
+        )
+
 
 
 # =========================
@@ -1370,97 +1573,172 @@ async def save(call: CallbackQuery):
     s = upload_sessions.get(uid)
 
     if not s:
-        return await call.answer("Session tidak ditemukan")
+        return await call.answer(
+            "Session tidak ditemukan"
+        )
 
     if s.get("processing"):
-        return await call.answer("Processing...")
+        return await call.answer(
+            "Processing..."
+        )
 
     s["processing"] = True
 
-    # =========================
-    # GENERATE CODE STABLE
-    # =========================
-    code = generate_code(s["video"], s["photo"], s["document"])
+    code = None
 
-    total = len(s["items"])
-    size = sum(i["size"] for i in s["items"])
-    now = datetime.utcnow().isoformat()
+    try:
 
-    # =========================
-    # 1. SAVE TO SUPABASE (PERMANENT)
-    # =========================
-    supabase.table("uploads").insert({
-        "code": code,
-        "owner_id": uid,
-        "video": s["video"],
-        "photo": s["photo"],
-        "document": s["document"],
-        "total_media": total,
-        "total_size": size,
-        "price": s["price"],
-        "share": s["share"],
-        "created_at": now,
-        "status": "active",
-        "payment_status": "free" if s["price"] == 0 else "pending"
-    }).execute()
-
-    # =========================
-    # 2. SAVE MEDIA LIST
-    # =========================
-    supabase.table("media_files").insert([
-        {
-            "code": code,
-            "file_id": i["file_id"],
-            "file_type": i["type"],
-            "file_size": i["size"]
-        }
-        for i in s["items"]
-    ]).execute()
-
-    # =========================
-    # 3. QRIS REAL (BAYARGG)
-    # =========================
-    invoice_id = None
-    qr_url = None
-
-    if s["price"] > 0:
-
-        invoice = await create_bayargg_invoice(
-            amount=s["price"],
-            code=code,
-            uid=uid
+        # =========================
+        # GENERATE CODE
+        # =========================
+        code = generate_unique_code(
+            s["video"],
+            s["photo"],
+            s["document"]
         )
 
-        invoice_id = invoice["invoice_id"]
-        qr_url = invoice.get("qr_url")
+        total = len(s["items"])
+        size = sum(
+            i["size"]
+            for i in s["items"]
+        )
 
-        # update DB dengan invoice real
-        supabase.table("uploads").update({
-            "invoice_id": invoice_id,
-            "qr_url": qr_url
-        }).eq("code", code).execute()
+        now = datetime.utcnow().isoformat()
 
-    # =========================
-    # FINAL MESSAGE
-    # =========================
-    await call.message.edit_text(
-        "✅ <b>UPLOAD CREATED</b>\n\n"
-        f"🔑 Code: <code>{code}</code>\n"
-        f"📁 Total: {total} media\n"
-        f"💾 Size: {round(size/1024/1024,2)} MB\n"
-        f"💰 Price: {s['price']}\n"
-        f"📡 Share: {'YES' if s['share'] else 'NO'}\n"
-        f"🧾 Invoice: {invoice_id or 'FREE'}\n\n"
-        "⚡ Code ini TETAP VALID walau bot restart / pindah server",
-        parse_mode="HTML"
-    )
+        # =========================
+        # SAVE UPLOAD
+        # =========================
+        supabase.table(
+            "uploads"
+        ).insert({
+            "code": code,
+            "owner_id": uid,
+            "video": s["video"],
+            "photo": s["photo"],
+            "document": s["document"],
+            "total_media": total,
+            "total_size": size,
+            "price": s["price"],
+            "share": s["share"],
+            "created_at": now,
+            "status": "active",
+            "payment_status":
+                "free"
+                if s["price"] == 0
+                else "pending"
+        }).execute()
 
-    # =========================
-    # CLEAN LOCAL SESSION ONLY
-    # =========================
-    upload_sessions.pop(uid, None)
-    user_states.pop(uid, None)
-    last_edit_time.pop(uid, None)
+        # =========================
+        # SAVE MEDIA
+        # =========================
+        media_rows = [
+            {
+                "code": code,
+                "file_id": i["file_id"],
+                "file_type": i["type"],
+                "file_size": i["size"]
+            }
+            for i in s["items"]
+        ]
+
+        for x in range(
+            0,
+            len(media_rows),
+            25
+        ):
+
+            supabase.table(
+                "media_files"
+            ).insert(
+                media_rows[x:x+25]
+            ).execute()
+
+        # =========================
+        # QRIS
+        # =========================
+        invoice_id = None
+        qr_url = None
+
+        if s["price"] > 0:
+
+            invoice = await create_bayargg_invoice(
+                amount=s["price"],
+                code=code,
+                uid=uid
+            )
+
+            invoice_id = invoice.get(
+                "invoice_id"
+            )
+
+            qr_url = invoice.get(
+                "qr_url"
+            )
+
+            if not invoice_id:
+                raise Exception(
+                    "Invoice ID tidak ditemukan"
+                )
+
+            supabase.table(
+                "uploads"
+            ).update({
+                "invoice_id": invoice_id,
+                "qr_url": qr_url
+            }).eq(
+                "code",
+                code
+            ).execute()
+
+        # =========================
+        # SUCCESS
+        # =========================
+        await call.message.edit_text(
+            "✅ <b>UPLOAD CREATED</b>\n\n"
+            f"🔑 Code: <code>{code}</code>\n"
+            f"📁 Total: {total} media\n"
+            f"💾 Size: {round(size/1024/1024,2)} MB\n"
+            f"💰 Price: {s['price']}\n"
+            f"📡 Share: {'YES' if s['share'] else 'NO'}\n"
+            f"🧾 Invoice: {invoice_id or 'FREE'}\n\n"
+            "⚡ Code tetap valid walau bot restart",
+            parse_mode="HTML"
+        )
+
+        upload_sessions.pop(uid, None)
+        user_states.pop(uid, None)
+        last_edit_time.pop(uid, None)
+
+    except Exception as e:
+
+        try:
+
+            if code:
+
+                supabase.table(
+                    "media_files"
+                ).delete().eq(
+                    "code",
+                    code
+                ).execute()
+
+                supabase.table(
+                    "uploads"
+                ).delete().eq(
+                    "code",
+                    code
+                ).execute()
+
+        except Exception:
+            pass
+
+        await call.message.edit_text(
+            f"❌ SAVE GAGAL\n\n{str(e)}"
+        )
+
+    finally:
+
+        s["processing"] = False
 
 # =========================
 # DBCHECK
