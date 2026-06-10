@@ -704,17 +704,28 @@ def wd_status():
 # KEYBOARD
 # =========================
 def withdraw_button(is_open: bool):
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(
-                text="🟢 WITHDRAW OPEN" if is_open else "🔴 WITHDRAW CLOSED",
-                callback_data="wd_open" if is_open else "wd_closed"
-            )
-        ],
-        [InlineKeyboardButton("💸 REQUEST WITHDRAW", callback_data="wd_request")],
-        [InlineKeyboardButton("🔙 KEMBALI", callback_data="home")]
-    ])
-
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🟢 WITHDRAW OPEN" if is_open else "🔴 WITHDRAW CLOSED",
+                    callback_data="wd_open" if is_open else "wd_closed"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💸 REQUEST WITHDRAW",
+                    callback_data="wd_request"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔙 KEMBALI",
+                    callback_data="home"
+                )
+            ]
+        ]
+    )
 
 # =========================
 # STATE
