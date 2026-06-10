@@ -721,9 +721,7 @@ async def live_withdraw_panel(message, user_id):
             open_status, next_time, status_text = wd_status()
             now = now_wib().strftime("%H:%M:%S")
 
-            # =========================
             # TIMER REAL DARI WD STATUS
-            # =========================
             if open_status:
                 remaining = next_time - now_wib()
                 remaining_text = f"⏳ CLOSE IN {fmt_delta(remaining)}"
@@ -747,11 +745,16 @@ async def live_withdraw_panel(message, user_id):
                         reply_markup=withdraw_button(open_status)
                     )
                     last_text = panel
-                except Exception as e:
-                    # ignore "message not modified"
+                except Exception:
+                    # ignore message not modified / edit error
                     pass
 
             await asyncio.sleep(5)
+
+    # 🔥 INI YANG KAMU TANYA (WAJIB DI SINI)
+    except asyncio.CancelledError:
+        withdraw_live_flag[user_id] = False
+        raise
 
     except Exception as e:
         print("LIVE PANEL ERROR:", repr(e))
