@@ -190,8 +190,7 @@ last_edit_time = {}
 force_cache = {}
 pagination_lock = {}
 COOLDOWN_TIME = 5
-withdraw_live_flag = {}
-live_tasks = {}
+
 
 # lock untuk pagination (anti race UI)
 pagination_lock = defaultdict(asyncio.Lock)
@@ -708,91 +707,13 @@ def withdraw_button(is_open: bool):
         ]
     )
 # =========================
-# LIVE PANEL
+# WD TOGGLE
 # =========================
-async def live_withdraw_panel(message, user_id):
-
-    last_text = None
-    withdraw_live_flag[user_id] = True
-
-    try:
-        while withdraw_live_flag.get(user_id):
-
-            open_status, next_time, status_text = wd_status()
-            now = now_wib().strftime("%H:%M:%S")
-
-            # TIMER REAL DARI WD STATUS
-            if open_status:
-                remaining = next_time - now_wib()
-                remaining_text = f"⏳ CLOSE IN {fmt_delta(remaining)}"
-            else:
-                remaining = next_time - now_wib()
-                remaining_text = f"⏳ OPEN IN {fmt_delta(remaining)}"
-
-            panel = (
-                "💸 WITHDRAW CENTER\n\n"
-                f"🕒 WIB: {now}\n"
-                f"{status_text}\n\n"
-                f"🔓 Status: {'OPEN 🟢' if open_status else 'CLOSED 🔴'}\n"
-                f"{remaining_text}\n"
-                "━━━━━━━━━━━━━━"
-            )
-
-            if panel != last_text:
-                try:
-                    await message.edit_text(
-                        panel,
-                        reply_markup=withdraw_button(open_status)
-                    )
-                    last_text = panel
-                except Exception:
-                    # ignore message not modified / edit error
-                    pass
-
-            await asyncio.sleep(5)
-
-    # 🔥 INI YANG KAMU TANYA (WAJIB DI SINI)
-    except asyncio.CancelledError:
-        withdraw_live_flag[user_id] = False
-        raise
-
-    except Exception as e:
-        print("LIVE PANEL ERROR:", repr(e))
-
-    finally:
-        withdraw_live_flag[user_id] = False
-        live_tasks.pop(user_id, None)
-
-
-@router.callback_query(F.data == "wd_live")
-async def wd_live(call: CallbackQuery):
-
-    await call.answer()
-    user_id = call.from_user.id
-
-    # 🔥 STOP TOTAL
-    withdraw_live_flag[user_id] = False
-
-    task = live_tasks.get(user_id)
-    if task and not task.done():
-        task.cancel()
-        try:
-            await task
-        except:
-            pass
-
-    live_tasks.pop(user_id, None)
-
-    # 🔥 START BARU (SETELAH BERSIH)
-    live_tasks[user_id] = asyncio.create_task(
-        live_withdraw_panel(call.message, user_id)
-    )
 @router.callback_query(F.data == "wd_toggle")
 async def toggle_withdraw(call: CallbackQuery):
 
     now = time.time()
 
-    # toggle state
     if withdraw_state["open"]:
         withdraw_state["open"] = False
         withdraw_state["close_at"] = None
@@ -804,17 +725,9 @@ async def toggle_withdraw(call: CallbackQuery):
 
     await call.answer(text, show_alert=True)
 
-    # OPTIONAL: paksa refresh panel kalau live aktif
-    user_id = call.from_user.id
-    task = live_tasks.get(user_id)
-
-    if task and not task.done():
-        try:
-            await call.message.edit_reply_markup(
-                reply_markup=withdraw_button(withdraw_state["open"])
-            )
-        except:
-            pass
+    await call.message.edit_reply_markup(
+        reply_markup=withdraw_button(withdraw_state["open"])
+    )
 # =========================
 # CANCEL
 # =========================
