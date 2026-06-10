@@ -1,40 +1,24 @@
-from aiogram import Router, F
-from aiogram.types import (
-    Message,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-    CallbackQuery
-)
+from aiogram import Router
 from aiogram.filters import CommandStart
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 
-from db.pool import get_user
+from db.users import ensure_user, get_balance
 
 router = Router()
+
 
 CHANNEL_ID = -1003712587847
 GROUP_ID = -1003920865154
 
 
-# =========================
-# FORCE JOIN BUTTON
-# =========================
 def force_join_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="📢 Channel Update", url="https://t.me/yourchannel"),
-        ],
-        [
-            InlineKeyboardButton(text="💬 Group Chat", url="https://t.me/yourgroup"),
-        ],
-        [
-            InlineKeyboardButton(text="✅ Done Cek", callback_data="check_join")
-        ]
+        [InlineKeyboardButton(text="📢 Channel", url="https://t.me/+3g_yhHwxCrc5ZTg9")],
+        [InlineKeyboardButton(text="💬 Group", url="https://t.me/+1tipdp-NTywzODhl")],
+        [InlineKeyboardButton(text="✅ Done Cek", callback_data="check_join")]
     ])
 
 
-# =========================
-# DASHBOARD BUTTON
-# =========================
 def dashboard_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -52,85 +36,36 @@ def dashboard_kb():
     ])
 
 
-# =========================
-# CHECK JOIN FUNCTION
-# =========================
 async def is_joined(bot, user_id: int) -> bool:
     try:
         ch = await bot.get_chat_member(CHANNEL_ID, user_id)
         gr = await bot.get_chat_member(GROUP_ID, user_id)
 
-        return ch.status in ["member", "administrator", "creator"] and \
-               gr.status in ["member", "administrator", "creator"]
+        return ch.status in ("member", "administrator", "creator") and \
+               gr.status in ("member", "administrator", "creator")
     except:
         return False
 
 
-# =========================
-# FORMAT DASHBOARD
-# =========================
-def format_dashboard(user, db_user):
-    idr = int(db_user.get("balance_idr", 0))
-    usd = float(db_user.get("balance_usd", 0))
-
-    return (
-        f"👋 Hay {user.full_name}\n"
-        f"🆔 Id : <code>{user.id}</code>\n"
-        f"💰 Saldo : Rp {idr:,} / $ {usd:.2f}\n\n"
-        f"🔥 Dashboard Active"
-    )
-
-
-# =========================
-# START COMMAND
-# =========================
 @router.message(CommandStart())
 async def start_cmd(message: Message):
     bot = message.bot
     user = message.from_user
 
-    # FORCE JOIN CHECK
+    await ensure_user(user.id, user.username or "", user.full_name)
+
     if not await is_joined(bot, user.id):
         await message.answer(
-            "⚠️ Join terlebih dahulu untuk memastikan kamu bukan bot.",
+            "⚠️ Join dulu baru bisa pakai bot",
             reply_markup=force_join_kb()
         )
         return
 
-    # GET / CREATE USER (REAL DB)
-    db_user = await get_user(user.id, user.full_name)
+    bal_idr, bal_usd = await get_balance(user.id)
 
     await message.answer(
-        format_dashboard(user, db_user),
+        f"👋 Halo {user.full_name}\n"
+        f"🆔 ID: <code>{user.id}</code>\n"
+        f"💰 Saldo: Rp {bal_idr:,} / $ {bal_usd}",
         reply_markup=dashboard_kb()
     )
-
-
-# =========================
-# CHECK JOIN CALLBACK
-# =========================
-@router.callback_query(F.data == "check_join")
-async def check_join(call: CallbackQuery):
-    bot = call.bot
-    user = call.from_user
-
-    if await is_joined(bot, user.id):
-
-        # hapus pesan force join
-        try:
-            await call.message.delete()
-        except:
-            pass
-
-        db_user = await get_user(user.id, user.full_name)
-
-        await call.message.answer(
-            format_dashboard(user, db_user),
-            reply_markup=dashboard_kb()
-        )
-
-    else:
-        await call.answer(
-            "❌ Kamu belum join semua channel/group",
-            show_alert=True
-        )
