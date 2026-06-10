@@ -1054,7 +1054,7 @@ async def generate_unique_code(
     for _ in range(20):
 
         code = (
-            f"bb_{v}v_{p}p_{d}d_"
+            f"bluebirdbot_{v}v_{p}p_{d}d_"
             f"{secrets.token_hex(4)}"
         )
 
