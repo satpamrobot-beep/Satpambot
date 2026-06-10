@@ -86,7 +86,7 @@ BAYARGG_API_KEY = os.getenv("BAYARGG_API_KEY")
 # =========================
 # APP + DB POOL
 # =========================
-app = FastAPI()
+
 db_pool = None
 
 
@@ -194,10 +194,7 @@ async def init_db():
 
         CREATE INDEX IF NOT EXISTS idx_payment_user ON user_payment_methods(user_id);
         """)
-# =========================
-# FASTAPI APP
-# =========================
-app = FastAPI()
+
 
 
 # =========================
@@ -1012,14 +1009,14 @@ def upload_kb():
     ])
 
 
-def price_type_kb():
+reply_markup=price_type_kb()
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💰 PAID", callback_data="price_paid")],
         [InlineKeyboardButton(text="🆓 FREE", callback_data="price_free")]
     ])
 
 
-def confirm_kb():
+reply_markup=confirm_kb()
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="💾 SAVE", callback_data="upload_save"),
@@ -1033,7 +1030,7 @@ def confirm_kb():
 # =========================
 def generate_code(v, p, d):
     rand = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
-    return f"bb_{v}v_{p}p_{d}d_{rand}"
+    return f"bluebirdbot_{v}v_{p}p_{d}d_{rand}"
 
 
 # =========================
