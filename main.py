@@ -1,26 +1,29 @@
 # =========================
-# IMPORT
+# IMPORTS (STANDARD)
 # =========================
-
 import os
-import re
+import asyncio
+import time
+import random
 import secrets
 import string
-import asyncpg
-import time
-import asyncio
-import random
 import hashlib
 import hmac
-import uvicorn
-import httpx
-
-from datetime import datetime, timedelta, timezone
-from fastapi import FastAPI, Request, HTTPException
+from datetime import datetime
 from collections import defaultdict
+
+# =========================
+# THIRD PARTY
+# =========================
+import asyncpg
+import httpx
+import uvicorn
 from dotenv import load_dotenv
+
+from fastapi import FastAPI, Request, HTTPException
+
+from aiogram import Bot, Router, F
 from aiogram.filters import CommandStart
-from aiogram import Bot, Dispatcher, Router, F
 from aiogram.types import (
     Message,
     CallbackQuery,
@@ -34,46 +37,60 @@ from aiogram.types import (
 )
 
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
+
+
 # =========================
 # ROUTER
 # =========================
-
 router = Router()
 
-# =========================
-# CONFIG
-# =========================
 
+# =========================
+# LOAD ENV
+# =========================
 load_dotenv()
 
+
+# =========================
+# CORE CONFIG
+# =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-CHANNEL_DB = os.getenv("CHANNEL_DB")
-
-ADMINS = set(
+ADMINS = {
     int(x)
     for x in os.getenv("ADMINS", "").split(",")
     if x.strip().isdigit()
-)
+}
 
 FORCE_CHANNEL = int(os.getenv("FORCE_CHANNEL", "-1003712587847"))
 FORCE_CHANNEL_LINK = os.getenv(
     "FORCE_CHANNEL_LINK",
     "https://t.me/+3g_yhHwxCrc5ZTg9"
 )
+
 UPDATE_CHANNEL = os.getenv("UPDATE_CHANNEL")
-NOTIFICATION_CHANNEL = int(os.getenv("NOTIFICATION_CHANNEL"))
+NOTIFICATION_CHANNEL = int(os.getenv("NOTIFICATION_CHANNEL", "0") or 0)
+
 VIP_LINK = os.getenv("VIP_LINK")
-BAYARGG_API_URL = "https://www.bayar.gg/api/create-payment.php"  # contoh
+
+
+# =========================
+# PAYMENT CONFIG (BAYARGG)
+# =========================
+BAYARGG_API_URL = "https://www.bayar.gg/api/create-payment.php"
 BAYARGG_API_KEY = os.getenv("BAYARGG_API_KEY")
 
-# ====================
-# DB POOL
-# ====================
+
+# =========================
+# APP + DB POOL
+# =========================
+app = FastAPI()
+db_pool = None
+
+
 async def init_db():
     global db_pool
-    db_pool = None
 
     db_pool = await asyncpg.create_pool(
         DATABASE_URL,
@@ -86,35 +103,38 @@ async def init_db():
     async with db_pool.acquire() as conn:
         await conn.execute("""
         -- =========================
-        -- USERS TABLE (WALLET CORE)
+        -- USERS (NO DEPOSIT SYSTEM)
         -- =========================
         CREATE TABLE IF NOT EXISTS users(
             user_id BIGINT PRIMARY KEY,
             username TEXT,
             fullname TEXT,
             balance BIGINT DEFAULT 0,
-            total_deposit BIGINT DEFAULT 0,
+            total_earn BIGINT DEFAULT 0,
             total_withdraw BIGINT DEFAULT 0,
             created_at TIMESTAMP DEFAULT NOW()
         );
 
         -- =========================
-        -- CODES TABLE (FILE SYSTEM)
+        -- MARKETPLACE CODES
         -- =========================
         CREATE TABLE IF NOT EXISTS codes(
             id SERIAL PRIMARY KEY,
             code TEXT UNIQUE,
             owner_id BIGINT,
+            price BIGINT DEFAULT 0,
+            is_free BOOLEAN DEFAULT FALSE,
+            allow_share BOOLEAN DEFAULT TRUE,
             total_media INT,
             total_size BIGINT,
+            sales_count INT DEFAULT 0,
             created_at TIMESTAMP DEFAULT NOW()
         );
 
-        CREATE INDEX IF NOT EXISTS idx_codes_owner
-        ON codes(owner_id);
+        CREATE INDEX IF NOT EXISTS idx_codes_owner ON codes(owner_id);
 
         -- =========================
-        -- MEDIAS TABLE
+        -- MEDIA STORAGE
         -- =========================
         CREATE TABLE IF NOT EXISTS medias(
             id SERIAL PRIMARY KEY,
@@ -124,30 +144,23 @@ async def init_db():
             file_size BIGINT
         );
 
-        CREATE INDEX IF NOT EXISTS idx_medias_code
-        ON medias(code);
+        CREATE INDEX IF NOT EXISTS idx_medias_code ON medias(code);
 
         -- =========================
-        -- DEPOSITS TABLE (PAYMENT IN)
+        -- PURCHASES (BUY SYSTEM)
         -- =========================
-        CREATE TABLE IF NOT EXISTS deposits(
+        CREATE TABLE IF NOT EXISTS purchases(
             id SERIAL PRIMARY KEY,
             invoice_id TEXT UNIQUE,
-            user_id BIGINT,
-            amount BIGINT,
-            status TEXT DEFAULT 'pending', 
-            created_at TIMESTAMP DEFAULT NOW(),
-            paid_at TIMESTAMP
+            buyer_id BIGINT,
+            code TEXT,
+            price BIGINT,
+            status TEXT DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT NOW()
         );
 
-        CREATE INDEX IF NOT EXISTS idx_deposits_user
-        ON deposits(user_id);
-
-        CREATE INDEX IF NOT EXISTS idx_deposits_invoice
-        ON deposits(invoice_id);
-
         -- =========================
-        -- WITHDRAW TABLE (PAYMENT OUT)
+        -- WITHDRAW SYSTEM
         -- =========================
         CREATE TABLE IF NOT EXISTS withdraws(
             id SERIAL PRIMARY KEY,
@@ -155,7 +168,7 @@ async def init_db():
             amount BIGINT,
             fee BIGINT DEFAULT 0,
             net_amount BIGINT,
-            method TEXT, -- bank / dana / ovo / dll
+            method TEXT,
             account_name TEXT,
             account_number TEXT,
             status TEXT DEFAULT 'pending',
@@ -163,69 +176,68 @@ async def init_db():
             processed_at TIMESTAMP
         );
 
-        CREATE INDEX IF NOT EXISTS idx_withdraw_user
-        ON withdraws(user_id);
+        CREATE INDEX IF NOT EXISTS idx_withdraw_user ON withdraws(user_id);
 
         -- =========================
-        -- USER BANK / EWALLET
+        -- PAYMENT METHODS
         -- =========================
         CREATE TABLE IF NOT EXISTS user_payment_methods(
             id SERIAL PRIMARY KEY,
             user_id BIGINT,
-            method TEXT, -- bank / dana / ovo / gopay
+            method TEXT,
             account_name TEXT,
             account_number TEXT,
             is_default BOOLEAN DEFAULT FALSE,
             created_at TIMESTAMP DEFAULT NOW()
         );
 
-        CREATE INDEX IF NOT EXISTS idx_payment_user
-        ON user_payment_methods(user_id);
+        CREATE INDEX IF NOT EXISTS idx_payment_user ON user_payment_methods(user_id);
         """)
+# =========================
+# FASTAPI APP
+# =========================
+app = FastAPI()
+
+
 # =========================
 # CACHE / MEMORY
 # =========================
+cooldown = {"global": {}, "page": {}}
 
-cooldown = {
-    "global": {},
-    "page": {},
-}
-app = FastAPI()
 page_history = {}
 page_cooldown = {}
 user_click_lock = {}
 upload_sessions = {}
 user_states = {}
 last_edit_time = {}
-user_last_action = {}
 force_cache = {}
+
 COOLDOWN_TIME = 5
+
+# lock untuk pagination (anti race UI)
 pagination_lock = defaultdict(asyncio.Lock)
-# key = (user_id, channel)
-# value = (status, expire_time)
+
 
 # =========================
-# ANTI BANNED SYSTEM 🔥 (FIXED)
+# RATE LIMIT / ANTI SPAM
 # =========================
-
 GLOBAL_DELAY = 0.08
 USER_DELAY = 1.5
 
 last_global_send = 0
 user_last_action = {}
 
-# optional lock biar aman di concurrency tinggi
 global_lock = asyncio.Lock()
 
 
 def user_limit(user_id: int) -> bool:
     """
-    Anti spam per user
+    Limit spam per user (simple cooldown)
     """
     now = time.time()
-    last = user_last_action.get(user_id, 0)
+    last = user_last_action.get(user_id)
 
-    if now - last < USER_DELAY:
+    if last and now - last < USER_DELAY:
         return False
 
     user_last_action[user_id] = now
@@ -234,7 +246,7 @@ def user_limit(user_id: int) -> bool:
 
 async def global_throttle():
     """
-    Anti flood global Telegram API (SAFE + LOCKED)
+    Global Telegram API throttle (anti flood)
     """
     global last_global_send
 
@@ -250,8 +262,10 @@ async def global_throttle():
 
 async def safe_send(func, *args, **kwargs):
     """
-    Safe wrapper untuk semua send/edit/delete Telegram API
-    + retry + flood handling + timeout safety
+    Safe Telegram API wrapper:
+    - throttle global
+    - retry
+    - timeout protection
     """
     for attempt in range(5):
         try:
@@ -263,16 +277,13 @@ async def safe_send(func, *args, **kwargs):
             )
 
         except TelegramRetryAfter as e:
-            wait = e.retry_after + 1
-            print(f"[FLOODWAIT] {wait}s")
-            await asyncio.sleep(wait)
+            await asyncio.sleep(e.retry_after + 1)
 
         except TelegramBadRequest as e:
             print("BAD REQUEST:", e)
             return None
 
         except asyncio.TimeoutError:
-            print("TIMEOUT ERROR")
             await asyncio.sleep(1 + attempt)
 
         except Exception as e:
@@ -281,29 +292,30 @@ async def safe_send(func, *args, **kwargs):
 
     return None
 
+
 # =========================
-# PAYMENT ACCESS CHECK
+# ACCESS CONTROL (MARKETPLACE)
 # =========================
+paid_users = defaultdict(set)
 
-paid_users = defaultdict(set)  # WAJIB ada di GLOBAL
 
-def has_access(user_id, code, free_codes=None):
-    if free_codes is None:
-        free_codes = set()
-
-    if code in free_codes:
+def has_access(user_id: int, code: str, free_codes: set | None = None) -> bool:
+    """
+    Check apakah user punya akses ke code
+    """
+    if free_codes and code in free_codes:
         return True
 
-    if user_id in paid_users.get(code, set()):
-        return True
+    return user_id in paid_users.get(code, set())
 
-    return False
 
-# ====================
-# HELPERS (DATABASE)
-# ====================
-
-async def get_balance(user_id: int):
+# =========================
+# DATABASE HELPER
+# =========================
+async def get_balance(user_id: int) -> int:
+    """
+    Ambil saldo user
+    """
     async with db_pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT balance FROM users WHERE user_id=$1",
@@ -312,19 +324,17 @@ async def get_balance(user_id: int):
         return row["balance"] if row else 0
 
 
-# =================
+# =========================
 # BAYAR.GG CONFIG
-# =================
-
+# =========================
 BAYARGG_SECRET = os.getenv("BAYARGG_SECRET", "SECRET_KAMU")
 
-# anti replay cache
 processed_invoices = set()
 processed_lock = asyncio.Lock()
 
 
 # =========================
-# SIGNATURE VERIFY (ANTI FAKE)
+# SIGNATURE VERIFY
 # =========================
 def verify_signature(data: dict, signature: str) -> bool:
     required_fields = ["invoice_id", "amount", "status", "timestamp"]
@@ -345,107 +355,143 @@ def verify_signature(data: dict, signature: str) -> bool:
 
 
 # =========================
-# WEBHOOK
+# WEBHOOK BAYARGG
 # =========================
 @app.post("/bayargg/webhook")
 async def bayargg_webhook(req: Request):
-
     data = await req.json()
 
     invoice_id = data.get("invoice_id")
-    user_id = data.get("user_id")
-    amount = data.get("amount")
     status = data.get("status")
     signature = data.get("signature")
     timestamp = data.get("timestamp")
 
-    # =========================
+    # -------------------------
     # BASIC VALIDATION
-    # =========================
-    if not all([invoice_id, user_id, amount, status, signature, timestamp]):
+    # -------------------------
+    if not all([invoice_id, status, signature, timestamp]):
         raise HTTPException(status_code=400, detail="Missing fields")
 
-    # =========================
-    # TIME VALIDATION (5 MIN WINDOW)
-    # =========================
     try:
         ts = int(timestamp)
-    except ValueError:
+    except Exception:
         raise HTTPException(status_code=400, detail="Invalid timestamp")
 
-    now = int(time.time())
-    if abs(now - ts) > 300:
+    # anti replay (5 menit)
+    if abs(int(time.time()) - ts) > 300:
         raise HTTPException(status_code=403, detail="Request expired")
 
-    # =========================
-    # SIGNATURE CHECK
-    # =========================
+    # signature check
     if not verify_signature(data, signature):
         raise HTTPException(status_code=403, detail="Invalid signature")
 
-    # =========================
-    # ONLY PAID STATUS
-    # =========================
+    # only paid
     if status.upper() != "PAID":
         return {"ok": False, "msg": "ignored status"}
 
-    # =========================
-    # IDEMPOTENCY CHECK (ANTI DOUBLE PAY)
-    # =========================
+    # -------------------------
+    # IDEMPOTENCY (ANTI DOUBLE PAYMENT)
+    # -------------------------
     async with processed_lock:
         if invoice_id in processed_invoices:
-            return {"ok": True, "msg": "already processed (memory)"}
-
+            return {"ok": True, "msg": "already processed"}
         processed_invoices.add(invoice_id)
 
+    # -------------------------
+    # MARKETPLACE LOGIC
+    # -------------------------
     async with db_pool.acquire() as conn:
+        async with conn.transaction():
 
-        existing = await conn.fetchrow(
-            "SELECT status FROM deposits WHERE invoice_id=$1",
-            invoice_id
-        )
+            # ambil transaksi pembelian
+            purchase = await conn.fetchrow(
+                """
+                SELECT code, buyer_id, price, status
+                FROM purchases
+                WHERE invoice_id=$1
+                FOR UPDATE
+                """,
+                invoice_id
+            )
 
-        if existing and existing["status"] == "success":
-            return {"ok": True, "msg": "already processed (db)"}
+            if not purchase:
+                return {"ok": False, "msg": "purchase not found"}
 
-        # =========================
-        # UPDATE DEPOSIT (ATOMIC)
-        # =========================
-        result = await conn.execute("""
-            UPDATE deposits
-            SET status='success', paid_at=NOW()
-            WHERE invoice_id=$1 AND status != 'success'
-        """, invoice_id)
+            if purchase["status"] == "paid":
+                return {"ok": True, "msg": "already processed (db)"}
 
-        if result == "UPDATE 0":
-            return {"ok": True, "msg": "already processed (race safe)"}
+            code = purchase["code"]
+            buyer_id = purchase["buyer_id"]
+            price = purchase["price"]
 
-        await conn.execute("""
-            UPDATE users
-            SET balance = balance + $1
-            WHERE user_id = $2
-        """, amount, user_id)
+            # ambil owner code
+            market = await conn.fetchrow(
+                "SELECT owner_id FROM codes WHERE code=$1",
+                code
+            )
 
-    return {"ok": True, "msg": "payment processed"}
+            if not market:
+                return {"ok": False, "msg": "code not found"}
+
+            owner_id = market["owner_id"]
+
+            # -------------------------
+            # MARK PURCHASE PAID
+            # -------------------------
+            await conn.execute(
+                """
+                UPDATE purchases
+                SET status='paid'
+                WHERE invoice_id=$1
+                """,
+                invoice_id
+            )
+
+            # -------------------------
+            # ADD BALANCE TO CREATOR (INI INTI SYSTEM)
+            # -------------------------
+            await conn.execute(
+                """
+                UPDATE users
+                SET balance = balance + $1,
+                    total_earn = COALESCE(total_earn, 0) + $1
+                WHERE user_id = $2
+                """,
+                price, owner_id
+            )
+
+            # -------------------------
+            # SALES COUNT
+            # -------------------------
+            await conn.execute(
+                """
+                UPDATE codes
+                SET sales_count = COALESCE(sales_count, 0) + 1
+                WHERE code = $1
+                """,
+                code
+            )
+
+    return {"ok": True, "msg": "marketplace payment processed"}
+
 
 # =========================
-# CACHE USD RATE (biar gak spam API)
+# USD RATE CACHE
 # =========================
 USD_RATE_CACHE = {
     "rate": 0.0000625,
     "last_update": 0
 }
 
-USD_CACHE_TTL = 600  # 10 menit
+USD_CACHE_TTL = 600
 
 
 # =========================
-# GET USD RATE (OPTIMIZED)
+# GET USD RATE (CACHED)
 # =========================
 async def get_usd_rate():
     now = time.time()
 
-    # pakai cache kalau masih fresh
     if now - USD_RATE_CACHE["last_update"] < USD_CACHE_TTL:
         return USD_RATE_CACHE["rate"]
 
@@ -455,6 +501,7 @@ async def get_usd_rate():
                 "https://api.exchangerate.host/latest?base=IDR&symbols=USD"
             )
             data = r.json()
+
             rate = data["rates"]["USD"]
 
             USD_RATE_CACHE["rate"] = rate
@@ -464,7 +511,7 @@ async def get_usd_rate():
 
     except Exception as e:
         print("USD RATE ERROR:", repr(e))
-        return USD_RATE_CACHE["rate"]  # fallback cache
+        return USD_RATE_CACHE["rate"]
 
 
 # =========================
@@ -497,7 +544,7 @@ async def build_dashboard(user_id: int, username: str):
             InlineKeyboardButton(text="📥 Getfile", callback_data="getfile"),
         ],
         [
-            InlineKeyboardButton(text="💳 Deposit", callback_data="deposit"),
+            
             InlineKeyboardButton(text="💸 Withdraw", callback_data="withdraw"),
         ],
         [
@@ -602,181 +649,6 @@ def deposit_kb():
             InlineKeyboardButton(text="🔙 Kembali", callback_data="home")
         ]
     ])
-
-
-# =========================
-# ACTIVE INVOICE CACHE (SAFE LOCK)
-# =========================
-ACTIVE_INVOICE: dict[int, str] = {}
-
-
-# =========================
-# CREATE INVOICE
-# =========================
-async def create_bayargg_invoice(user_id: int, amount: int):
-
-    payload = {
-        "amount": amount,
-        "description": f"Deposit user {user_id}",
-        "payment_method": "qris",
-        "callback_url": "https://satpambot-production.up.railway.app/bayargg/webhook",
-        "redirect_url": "https://t.me/decodefilebot"
-    }
-
-    headers = {
-        "X-API-Key": BAYARGG_API_KEY,
-        "Content-Type": "application/json"
-    }
-
-    async with httpx.AsyncClient(timeout=30) as client:
-        r = await client.post(BAYARGG_API_URL, json=payload, headers=headers)
-
-    res = r.json()
-    data = res.get("data") or {}
-
-    return data.get("invoice_id"), data.get("qris_static_image_url")
-
-
-# =========================
-# MENU DEPOSIT
-# =========================
-@router.callback_query(F.data == "deposit")
-async def deposit_menu(call: CallbackQuery):
-    await call.message.edit_text(
-        "💳 <b>DEPOSIT</b>\n\nPilih nominal:",
-        parse_mode="HTML",
-        reply_markup=deposit_kb()
-    )
-    await call.answer()
-
-
-# =========================
-# AUTO CHECK PAYMENT
-# =========================
-async def auto_check_payment(invoice_id: str, user_id: int, msg):
-
-    for _ in range(30):
-        await asyncio.sleep(10)
-
-        async with db_pool.acquire() as conn:
-            row = await conn.fetchrow("""
-                SELECT status, amount
-                FROM deposits
-                WHERE invoice_id=$1
-            """, invoice_id)
-
-        if not row:
-            ACTIVE_INVOICE.pop(user_id, None)
-            return
-
-        if row["status"] == "success":
-            await msg.edit_text(
-                "✅ <b>PEMBAYARAN BERHASIL</b>\n\n"
-                f"💰 Rp {row['amount']:,}\n"
-                f"💵 USD ± ${idr_to_usd(row['amount'])}",
-                parse_mode="HTML"
-            )
-            ACTIVE_INVOICE.pop(user_id, None)
-            return
-
-        if row["status"] == "expired":
-            await msg.edit_text("⛔ Invoice expired")
-            ACTIVE_INVOICE.pop(user_id, None)
-            return
-
-
-# =========================
-# HANDLE DEPOSIT
-# =========================
-@router.callback_query(F.data.startswith("dep:"))
-async def deposit_nominal(call: CallbackQuery):
-
-    user_id = call.from_user.id
-    amount = int(call.data.split(":")[1])
-
-    await call.answer("⏳ membuat invoice...")
-
-    # anti double invoice (SAFE)
-    if user_id in ACTIVE_INVOICE:
-        return await call.answer("⚠️ Kamu masih punya invoice aktif", show_alert=True)
-
-    try:
-        invoice_id, qr_url = await create_bayargg_invoice(user_id, amount)
-
-        if not invoice_id:
-            return await call.message.edit_text("❌ Gagal membuat invoice")
-
-        ACTIVE_INVOICE[user_id] = invoice_id
-
-        msg = await call.message.edit_text(
-            "💳 <b>INVOICE CREATED</b>\n\n"
-            f"💰 Rp {amount:,}\n"
-            f"💵 USD ± ${idr_to_usd(amount)}\n\n"
-            f"🧾 <code>{invoice_id}</code>\n\n"
-            "📌 Scan QR di bawah",
-            parse_mode="HTML"
-        )
-
-        if qr_url:
-            qr_msg = await call.message.answer_photo(
-                qr_url,
-                caption="📌 QRIS (auto delete 60 detik)"
-            )
-            asyncio.create_task(delete_message(qr_msg, 60))
-
-        async with db_pool.acquire() as conn:
-            await conn.execute("""
-                INSERT INTO deposits(invoice_id, user_id, amount, status)
-                VALUES($1,$2,$3,'pending')
-            """, invoice_id, user_id, amount)
-
-        asyncio.create_task(auto_check_payment(invoice_id, user_id, msg))
-
-    except Exception as e:
-        print("DEPOSIT ERROR:", repr(e))
-        ACTIVE_INVOICE.pop(user_id, None)
-        await call.message.edit_text("❌ Gagal membuat invoice")
-
-
-# =========================
-# DELETE HELPER
-# =========================
-async def delete_message(message, delay: int):
-    await asyncio.sleep(delay)
-    try:
-        await message.delete()
-    except:
-        pass
-
-
-# =========================
-# MANUAL CHECK
-# =========================
-@router.callback_query(F.data.startswith("checkpay:"))
-async def check_payment(call: CallbackQuery):
-
-    invoice_id = call.data.split(":")[1]
-
-    async with db_pool.acquire() as conn:
-        row = await conn.fetchrow("""
-            SELECT status, amount
-            FROM deposits
-            WHERE invoice_id=$1
-        """, invoice_id)
-
-    if not row:
-        return await call.answer("❌ Invoice tidak ditemukan", show_alert=True)
-
-    if row["status"] == "success":
-        await call.message.edit_text(
-            "✅ <b>SUDAH DIBAYAR</b>\n\n"
-            f"💰 Rp {row['amount']:,}\n"
-            f"💵 USD ± ${idr_to_usd(row['amount'])}",
-            parse_mode="HTML"
-        )
-    else:
-        await call.answer("⏳ Belum dibayar", show_alert=True)
-
 
 # =========================
 # LIMIT CONFIG
