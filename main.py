@@ -44,14 +44,7 @@ print("AIROGRAM VERSION:", aiogram.__version__)
 # ROUTER
 # =========================
 router = Router()
-
-
-# =========================
-# LOAD ENV
-# =========================
 load_dotenv()
-
-
 # =========================
 # CORE CONFIG
 # =========================
@@ -81,31 +74,29 @@ VIP_LINK = os.getenv("VIP_LINK")
 # =========================
 BAYARGG_API_URL = "https://www.bayar.gg/api/create-payment.php"
 BAYARGG_API_KEY = os.getenv("BAYARGG_API_KEY")
-
-
 # =========================
 # APP + DB POOL
 # =========================
 
-db_pool = None
 
+db_pool = None
 
 async def init_db():
     global db_pool
 
     db_pool = await asyncpg.create_pool(
-        DATABASE_URL,
-        min_size=2,
-        max_size=5,
+        dsn=DATABASE_URL,
+        min_size=1,
+        max_size=10,
+        command_timeout=30,
         statement_cache_size=0,
-        command_timeout=15
+        ssl="require"
     )
+
+    print("✅ Database Pool Connected")
 
     async with db_pool.acquire() as conn:
         await conn.execute("""
-        -- =========================
-        -- USERS (NO DEPOSIT SYSTEM)
-        -- =========================
         CREATE TABLE IF NOT EXISTS users(
             user_id BIGINT PRIMARY KEY,
             username TEXT,
@@ -116,42 +107,37 @@ async def init_db():
             created_at TIMESTAMP DEFAULT NOW()
         );
 
-        -- =========================
-        -- MARKETPLACE CODES
-        -- =========================
         CREATE TABLE IF NOT EXISTS codes(
-            id SERIAL PRIMARY KEY,
-            code TEXT UNIQUE,
-            owner_id BIGINT,
+            id BIGSERIAL PRIMARY KEY,
+            code TEXT UNIQUE NOT NULL,
+            owner_id BIGINT NOT NULL,
             price BIGINT DEFAULT 0,
             is_free BOOLEAN DEFAULT FALSE,
             allow_share BOOLEAN DEFAULT TRUE,
-            total_media INT,
-            total_size BIGINT,
-            sales_count INT DEFAULT 0,
+            total_media INTEGER DEFAULT 0,
+            total_size BIGINT DEFAULT 0,
+            sales_count INTEGER DEFAULT 0,
+            invoice_id TEXT,
+            payment_status TEXT DEFAULT 'free',
             created_at TIMESTAMP DEFAULT NOW()
         );
 
-        CREATE INDEX IF NOT EXISTS idx_codes_owner ON codes(owner_id);
+        CREATE INDEX IF NOT EXISTS idx_codes_owner
+        ON codes(owner_id);
 
-        -- =========================
-        -- MEDIA STORAGE
-        -- =========================
         CREATE TABLE IF NOT EXISTS medias(
-            id SERIAL PRIMARY KEY,
-            code TEXT,
-            file_id TEXT,
-            file_type TEXT,
-            file_size BIGINT
+            id BIGSERIAL PRIMARY KEY,
+            code TEXT NOT NULL,
+            file_id TEXT NOT NULL,
+            file_type TEXT NOT NULL,
+            file_size BIGINT DEFAULT 0
         );
 
-        CREATE INDEX IF NOT EXISTS idx_medias_code ON medias(code);
+        CREATE INDEX IF NOT EXISTS idx_medias_code
+        ON medias(code);
 
-        -- =========================
-        -- PURCHASES (BUY SYSTEM)
-        -- =========================
         CREATE TABLE IF NOT EXISTS purchases(
-            id SERIAL PRIMARY KEY,
+            id BIGSERIAL PRIMARY KEY,
             invoice_id TEXT UNIQUE,
             buyer_id BIGINT,
             code TEXT,
@@ -160,11 +146,8 @@ async def init_db():
             created_at TIMESTAMP DEFAULT NOW()
         );
 
-        -- =========================
-        -- WITHDRAW SYSTEM
-        -- =========================
         CREATE TABLE IF NOT EXISTS withdraws(
-            id SERIAL PRIMARY KEY,
+            id BIGSERIAL PRIMARY KEY,
             user_id BIGINT,
             amount BIGINT,
             fee BIGINT DEFAULT 0,
@@ -177,13 +160,11 @@ async def init_db():
             processed_at TIMESTAMP
         );
 
-        CREATE INDEX IF NOT EXISTS idx_withdraw_user ON withdraws(user_id);
+        CREATE INDEX IF NOT EXISTS idx_withdraw_user
+        ON withdraws(user_id);
 
-        -- =========================
-        -- PAYMENT METHODS
-        -- =========================
         CREATE TABLE IF NOT EXISTS user_payment_methods(
-            id SERIAL PRIMARY KEY,
+            id BIGSERIAL PRIMARY KEY,
             user_id BIGINT,
             method TEXT,
             account_name TEXT,
@@ -192,11 +173,9 @@ async def init_db():
             created_at TIMESTAMP DEFAULT NOW()
         );
 
-        CREATE INDEX IF NOT EXISTS idx_payment_user ON user_payment_methods(user_id);
+        CREATE INDEX IF NOT EXISTS idx_payment_user
+        ON user_payment_methods(user_id);
         """)
-
-
-
 # =========================
 # CACHE / MEMORY
 # =========================
@@ -1072,48 +1051,41 @@ async def generate_unique_code(
     d: int
 ):
 
-    while True:
+    for _ in range(20):
 
         code = (
-            f"bb_"
-            f"{v}v_"
-            f"{p}p_"
-            f"{d}d_"
+            f"bb_{v}v_{p}p_{d}d_"
             f"{secrets.token_hex(4)}"
         )
 
-        try:
+        async with db_pool.acquire() as conn:
 
-            result = (
-                supabase.table("uploads")
-                .select("code")
-                .eq("code", code)
-                .limit(1)
-                .execute()
+            exists = await conn.fetchval(
+                """
+                SELECT 1
+                FROM codes
+                WHERE code = $1
+                LIMIT 1
+                """,
+                code
             )
 
-            if not result.data:
-                return code
+        if not exists:
+            return code
 
-        except Exception as e:
-
-            print(
-                "CODE CHECK ERROR:",
-                repr(e)
-            )
-
-            return (
-                f"bb_"
-                f"{secrets.token_hex(8)}"
-            )
-
+    return f"bb_{secrets.token_hex(8)}"
 # =========================
-# START UPFILE
+# START UPLOAD
 # =========================
 @router.callback_query(F.data == "upfile")
 async def upfile(call: CallbackQuery):
 
     uid = call.from_user.id
+
+    # bersihkan session lama
+    upload_sessions.pop(uid, None)
+    user_states.pop(uid, None)
+    last_edit_time.pop(uid, None)
 
     upload_sessions[uid] = {
         "video": 0,
@@ -1122,21 +1094,39 @@ async def upfile(call: CallbackQuery):
         "items": [],
         "msg_id": call.message.message_id,
         "price": 0,
-        "mode": "upload",
         "share": True,
-        "processing": False
+        "processing": False,
+        "created_at": time.time()
     }
 
-    user_states[uid] = {"mode": "upload"}
+    user_states[uid] = {
+        "mode": "upload"
+    }
 
-    await call.message.edit_text(
-        "📤 UPLOAD MODE AKTIF\nKirim media sekarang",
-        reply_markup=upload_kb()
-    )
+    try:
+
+        await call.message.edit_text(
+            "📤 <b>UPLOAD MODE AKTIF</b>\n\n"
+            "Kirim foto, video, atau dokumen.\n"
+            f"📦 Maksimal {MAX_MEDIA} media\n"
+            f"💾 Maksimal {round(MAX_SIZE / 1024 / 1024 / 1024, 1)} GB",
+            parse_mode="HTML",
+            reply_markup=upload_kb()
+        )
+
+    except Exception as e:
+
+        print(
+            "UPFILE ERROR:",
+            repr(e)
+        )
+
+        await call.message.answer(
+            "📤 Upload mode aktif.\n"
+            "Silakan kirim media."
+        )
 
     await call.answer()
-
-
 # =========================
 # MEDIA HANDLER
 # =========================
@@ -1152,6 +1142,11 @@ async def media_handler(message: Message):
 
     if not s:
         return
+
+    s.setdefault("video", 0)
+    s.setdefault("photo", 0)
+    s.setdefault("document", 0)
+    s.setdefault("items", [])
 
     try:
 
@@ -1173,10 +1168,8 @@ async def media_handler(message: Message):
 
         size = getattr(file, "file_size", 0) or 0
 
-        # =========================
         # LIMIT FILE COUNT
-        # =========================
-        if len(s.get("items", [])) >= MAX_MEDIA:
+        if len(s["items"]) >= MAX_MEDIA:
 
             await message.answer(
                 f"❌ Maksimal {MAX_MEDIA} media"
@@ -1189,12 +1182,10 @@ async def media_handler(message: Message):
 
             return
 
-        # =========================
         # LIMIT TOTAL SIZE
-        # =========================
         current_size = sum(
-            x.get("size", 0)
-            for x in s.get("items", [])
+            item.get("size", 0)
+            for item in s["items"]
         )
 
         if current_size + size > MAX_SIZE:
@@ -1210,12 +1201,10 @@ async def media_handler(message: Message):
 
             return
 
-        # =========================
         # SAVE MEDIA
-        # =========================
         s[ftype] += 1
 
-        s.setdefault("items", []).append({
+        s["items"].append({
             "file_id": file.file_id,
             "type": ftype,
             "size": size
@@ -1229,9 +1218,7 @@ async def media_handler(message: Message):
             f"TOTAL={total}"
         )
 
-        # =========================
         # BUILD PROGRESS
-        # =========================
         v = s["video"]
         p = s["photo"]
         d = s["document"]
@@ -1249,8 +1236,8 @@ async def media_handler(message: Message):
         )
 
         total_size = sum(
-            x["size"]
-            for x in s["items"]
+            item["size"]
+            for item in s["items"]
         )
 
         size_mb = round(
@@ -1266,40 +1253,26 @@ async def media_handler(message: Message):
             f"💾 {size_mb} MB"
         )
 
-        # =========================
-        # THROTTLE UPDATE
-        # =========================
-        now = time.time()
+        s["last_text"] = text
 
-        if (
-            now -
-            last_edit_time.get(uid, 0)
-            >= 1.2
-        ):
+        try:
+            await message.bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=s["msg_id"],
+                text=text,
+                reply_markup=upload_kb()
+            )
+        except Exception as e:
 
-            last_edit_time[uid] = now
-
-            try:
-                await message.bot.edit_message_text(
-                    chat_id=message.chat.id,
-                    message_id=s["msg_id"],
-                    text=text,
-                    reply_markup=upload_kb()
+            if (
+                "message is not modified"
+                not in str(e).lower()
+            ):
+                print(
+                    "UPLOAD EDIT ERROR:",
+                    repr(e)
                 )
-            except Exception as e:
 
-                if (
-                    "message is not modified"
-                    not in str(e).lower()
-                ):
-                    print(
-                        "UPLOAD EDIT ERROR:",
-                        repr(e)
-                    )
-
-        # =========================
-        # DELETE USER MESSAGE
-        # =========================
         try:
             await message.delete()
         except:
@@ -1585,80 +1558,83 @@ async def save(call: CallbackQuery):
     s["processing"] = True
 
     code = None
+    invoice_id = None
+    qr_url = None
 
     try:
 
         # =========================
         # GENERATE CODE
         # =========================
-        code = generate_unique_code(
+        code = await generate_unique_code(
             s["video"],
             s["photo"],
             s["document"]
         )
 
         total = len(s["items"])
+
         size = sum(
             i["size"]
             for i in s["items"]
         )
 
-        now = datetime.utcnow().isoformat()
+        # =========================
+        # SAVE CODE
+        # =========================
+        async with db_pool.acquire() as conn:
 
-        # =========================
-        # SAVE UPLOAD
-        # =========================
-        supabase.table(
-            "uploads"
-        ).insert({
-            "code": code,
-            "owner_id": uid,
-            "video": s["video"],
-            "photo": s["photo"],
-            "document": s["document"],
-            "total_media": total,
-            "total_size": size,
-            "price": s["price"],
-            "share": s["share"],
-            "created_at": now,
-            "status": "active",
-            "payment_status":
-                "free"
-                if s["price"] == 0
-                else "pending"
-        }).execute()
+            await conn.execute(
+                """
+                INSERT INTO codes(
+                    code,
+                    owner_id,
+                    price,
+                    is_free,
+                    allow_share,
+                    total_media,
+                    total_size
+                )
+                VALUES($1,$2,$3,$4,$5,$6,$7)
+                """,
+                code,
+                uid,
+                s["price"],
+                s["price"] == 0,
+                s["share"],
+                total,
+                size
+            )
 
         # =========================
         # SAVE MEDIA
         # =========================
-        media_rows = [
-            {
-                "code": code,
-                "file_id": i["file_id"],
-                "file_type": i["type"],
-                "file_size": i["size"]
-            }
-            for i in s["items"]
-        ]
+        async with db_pool.acquire() as conn:
 
-        for x in range(
-            0,
-            len(media_rows),
-            25
-        ):
-
-            supabase.table(
-                "media_files"
-            ).insert(
-                media_rows[x:x+25]
-            ).execute()
+            await conn.executemany(
+                """
+                INSERT INTO medias(
+                    code,
+                    file_id,
+                    file_type,
+                    file_size
+                )
+                VALUES($1,$2,$3,$4)
+                """,
+                [
+                    (
+                        code,
+                        item["file_id"],
+                        item["type"],
+                        item["size"]
+                    )
+                    for item in s["items"]
+                ]
+            )
 
         # =========================
-        # QRIS
+        # CREATE INVOICE
         # =========================
-        invoice_id = None
-        qr_url = None
-
         if s["price"] > 0:
 
             invoice = await create_bayargg_invoice(
@@ -1680,15 +1656,25 @@ async def save(call: CallbackQuery):
                     "Invoice ID tidak ditemukan"
                 )
 
-            supabase.table(
-                "uploads"
-            ).update({
-                "invoice_id": invoice_id,
-                "qr_url": qr_url
-            }).eq(
-                "code",
-                code
-            ).execute()
+            async with db_pool.acquire() as conn:
+
+                await conn.execute(
+                    """
+                    INSERT INTO purchases(
+                        invoice_id,
+                        buyer_id,
+                        code,
+                        price,
+                        status
+                    )
+                    VALUES($1,$2,$3,$4,$5)
+                    """,
+                    invoice_id,
+                    uid,
+                    code,
+                    s["price"],
+                    "pending"
+                )
 
         # =========================
         # SUCCESS
@@ -1697,7 +1683,7 @@ async def save(call: CallbackQuery):
             "✅ <b>UPLOAD CREATED</b>\n\n"
             f"🔑 Code: <code>{code}</code>\n"
             f"📁 Total: {total} media\n"
-            f"💾 Size: {round(size/1024/1024,2)} MB\n"
+            f"💾 Size: {round(size / 1024 / 1024, 2)} MB\n"
             f"💰 Price: {s['price']}\n"
             f"📡 Share: {'YES' if s['share'] else 'NO'}\n"
             f"🧾 Invoice: {invoice_id or 'FREE'}\n\n"
@@ -1715,22 +1701,29 @@ async def save(call: CallbackQuery):
 
             if code:
 
-                supabase.table(
-                    "media_files"
-                ).delete().eq(
-                    "code",
-                    code
-                ).execute()
+                async with db_pool.acquire() as conn:
 
-                supabase.table(
-                    "uploads"
-                ).delete().eq(
-                    "code",
-                    code
-                ).execute()
+                    await conn.execute(
+                        "DELETE FROM medias WHERE code=$1",
+                        code
+                    )
 
-        except Exception:
-            pass
+                    await conn.execute(
+                        "DELETE FROM purchases WHERE code=$1",
+                        code
+                    )
+
+                    await conn.execute(
+                        "DELETE FROM codes WHERE code=$1",
+                        code
+                    )
+
+        except Exception as rollback_error:
+
+            print(
+                "ROLLBACK ERROR:",
+                repr(rollback_error)
+            )
 
         await call.message.edit_text(
             f"❌ SAVE GAGAL\n\n{str(e)}"
