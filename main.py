@@ -1130,6 +1130,8 @@ async def upfile(call: CallbackQuery):
 # =========================
 # MEDIA HANDLER
 # =========================
+last_edit_time = {}
+
 @router.message(F.photo | F.video | F.document)
 async def media_handler(message: Message):
 
@@ -1139,7 +1141,6 @@ async def media_handler(message: Message):
         return
 
     s = upload_sessions.get(uid)
-
     if not s:
         return
 
@@ -1168,40 +1169,27 @@ async def media_handler(message: Message):
 
         size = getattr(file, "file_size", 0) or 0
 
-        # LIMIT FILE COUNT
+        # LIMIT COUNT
         if len(s["items"]) >= MAX_MEDIA:
-
-            await message.answer(
-                f"❌ Maksimal {MAX_MEDIA} media"
-            )
-
+            await message.answer(f"❌ Maksimal {MAX_MEDIA} media")
             try:
                 await message.delete()
             except:
                 pass
-
             return
 
-        # LIMIT TOTAL SIZE
-        current_size = sum(
-            item.get("size", 0)
-            for item in s["items"]
-        )
+        # LIMIT SIZE
+        current_size = sum(x.get("size", 0) for x in s["items"])
 
         if current_size + size > MAX_SIZE:
-
-            await message.answer(
-                "❌ Total upload melebihi batas 2 GB"
-            )
-
+            await message.answer("❌ Total upload melebihi batas")
             try:
                 await message.delete()
             except:
                 pass
-
             return
 
-        # SAVE MEDIA
+        # SAVE
         s[ftype] += 1
 
         s["items"].append({
@@ -1212,48 +1200,43 @@ async def media_handler(message: Message):
 
         total = len(s["items"])
 
-        print(
-            f"UPLOAD {uid} | "
-            f"{ftype} | "
-            f"TOTAL={total}"
-        )
+        # DELETE USER MESSAGE
+        try:
+            await message.delete()
+        except:
+            pass
 
-        # BUILD PROGRESS
+        # THROTTLE
+        now = time.time()
+        if now - last_edit_time.get(uid, 0) < 1.2:
+            return
+        last_edit_time[uid] = now
+
+        # PROGRESS
         v = s["video"]
         p = s["photo"]
         d = s["document"]
 
-        progress = min(
-            int((total / MAX_MEDIA) * 100),
-            100
-        )
-
-        filled = progress // 10
-
-        bar = (
-            "█" * filled +
-            "░" * (10 - filled)
-        )
-
-        total_size = sum(
-            item["size"]
-            for item in s["items"]
-        )
-
         size_mb = round(
-            total_size / 1024 / 1024,
+            sum(x["size"] for x in s["items"]) / 1024 / 1024,
             2
         )
 
-        text = (
-            "📤 UPLOAD PROGRESS\n\n"
-            f"{bar} {progress}%\n"
-            f"🎬 {v} | 🖼 {p} | 📄 {d}\n"
-            f"📦 Total: {total}/{MAX_MEDIA}\n"
-            f"💾 {size_mb} MB"
-        )
+        progress = min(int((total / MAX_MEDIA) * 100), 100)
+        filled = progress // 10
 
-        s["last_text"] = text
+        bar = "█" * filled + "░" * (10 - filled)
+
+        text = (
+            "📤 UPLOAD MODE\n\n"
+            f"📊 Progress : [{bar}] {total} file\n\n"
+            f"🖼 Photo    : {p}\n"
+            f"🎬 Video    : {v}\n"
+            f"📁 Document : {d}\n"
+            f"💾 Size     : {size_mb} MB\n\n"
+            "━━━━━━━━━━━━━━\n"
+            "Tekan DONE kalau sudah selesai 😏"
+        )
 
         try:
             await message.bot.edit_message_text(
@@ -1263,27 +1246,11 @@ async def media_handler(message: Message):
                 reply_markup=upload_kb()
             )
         except Exception as e:
-
-            if (
-                "message is not modified"
-                not in str(e).lower()
-            ):
-                print(
-                    "UPLOAD EDIT ERROR:",
-                    repr(e)
-                )
-
-        try:
-            await message.delete()
-        except:
-            pass
+            if "message is not modified" not in str(e).lower():
+                print("EDIT ERROR:", repr(e))
 
     except Exception as e:
-
-        print(
-            "MEDIA HANDLER ERROR:",
-            repr(e)
-        )
+        print("MEDIA HANDLER ERROR:", repr(e))
 
 # =========================
 # DONE -> PRICE
