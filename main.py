@@ -683,8 +683,7 @@ def wd_status():
 
 # =========================
 # KEYBOARD
-# =========================
-def withdraw_button(is_open: bool):
+# =========================def withdraw_button(is_open: bool):
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -706,8 +705,7 @@ def withdraw_button(is_open: bool):
                 )
             ]
         ]
-
-
+    )
 # =========================
 # LIVE PANEL
 # =========================
