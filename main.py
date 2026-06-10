@@ -718,34 +718,25 @@ async def live_withdraw_panel(message, user_id):
     try:
         while withdraw_live_flag.get(user_id):
 
-            open_status = withdraw_state["open"]
-            now = time.time()
+            open_status, next_time, status_text = wd_status()
+            now = now_wib().strftime("%H:%M:%S")
 
             # =========================
-            # HITUNG SISA WAKTU
+            # TIMER REAL DARI WD STATUS
             # =========================
-            if open_status and withdraw_state.get("close_at"):
-                remaining = int(withdraw_state["close_at"] - now)
-
-                if remaining <= 0:
-                    withdraw_state["open"] = False
-                    remaining_text = "EXPIRED 🔴"
-                else:
-                    h = remaining // 3600
-                    m = (remaining % 3600) // 60
-                    remaining_text = f"{h}h {m}m lagi"
+            if open_status:
+                remaining = next_time - now_wib()
+                remaining_text = f"⏳ CLOSE IN {fmt_delta(remaining)}"
             else:
-                remaining_text = "CLOSED 🔴"
-
-            _, _, status_text = wd_status()
-            now_wib_time = now_wib().strftime("%H:%M:%S")
+                remaining = next_time - now_wib()
+                remaining_text = f"⏳ OPEN IN {fmt_delta(remaining)}"
 
             panel = (
                 "💸 WITHDRAW CENTER\n\n"
-                f"🕒 WIB: {now_wib_time}\n"
+                f"🕒 WIB: {now}\n"
                 f"{status_text}\n\n"
                 f"🔓 Status: {'OPEN 🟢' if open_status else 'CLOSED 🔴'}\n"
-                f"⏳ Auto close: {remaining_text}\n"
+                f"{remaining_text}\n"
                 "━━━━━━━━━━━━━━"
             )
 
@@ -756,7 +747,8 @@ async def live_withdraw_panel(message, user_id):
                         reply_markup=withdraw_button(open_status)
                     )
                     last_text = panel
-                except:
+                except Exception as e:
+                    # ignore "message not modified"
                     pass
 
             await asyncio.sleep(5)
