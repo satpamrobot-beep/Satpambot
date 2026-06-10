@@ -9,6 +9,7 @@ import secrets
 import string
 import hashlib
 import hmac
+import aiogram
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 
@@ -38,7 +39,7 @@ from aiogram.types import (
 
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 
-
+print("AIROGRAM VERSION:", aiogram.__version__)
 # =========================
 # ROUTER
 # =========================
@@ -943,24 +944,24 @@ MAX_SIZE = 2 * 1024 * 1024 * 1024
 def upload_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton("✅ DONE", callback_data="upload_done"),
-            InlineKeyboardButton("❌ CANCEL", callback_data="upload_cancel")
+            InlineKeyboardButton(text="✅ DONE", callback_data="upload_done"),
+            InlineKeyboardButton(text="❌ CANCEL", callback_data="upload_cancel")
         ]
     ])
 
 
-def price_kb():
+def price_type_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("🆓 FREE", callback_data="price_free")],
-        [InlineKeyboardButton("💰 PAID", callback_data="price_paid")]
+        [InlineKeyboardButton(text="💰 PAID", callback_data="price_paid")],
+        [InlineKeyboardButton(text="🆓 FREE", callback_data="price_free")]
     ])
 
 
-def review_kb():
+def confirm_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton("💾 SAVE", callback_data="upload_save"),
-            InlineKeyboardButton("✏️ EDIT", callback_data="upload_edit")
+            InlineKeyboardButton(text="💾 SAVE", callback_data="upload_save"),
+            InlineKeyboardButton(text="✏️ EDIT", callback_data="upload_edit")
         ]
     ])
 
