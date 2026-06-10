@@ -1000,29 +1000,36 @@ MAX_SIZE = 2 * 1024 * 1024 * 1024
 # =========================
 # KEYBOARD
 # =========================
+
 def upload_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="✅ DONE", callback_data="upload_done"),
-            InlineKeyboardButton(text="❌ CANCEL", callback_data="upload_cancel")
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ DONE", callback_data="upload_done"),
+                InlineKeyboardButton(text="❌ CANCEL", callback_data="upload_cancel")
+            ]
         ]
-    ])
+    )
 
 
-reply_markup=price_type_kb()
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💰 PAID", callback_data="price_paid")],
-        [InlineKeyboardButton(text="🆓 FREE", callback_data="price_free")]
-    ])
-
-
-reply_markup=confirm_kb()
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="💾 SAVE", callback_data="upload_save"),
-            InlineKeyboardButton(text="✏️ EDIT", callback_data="upload_edit")
+def price_type_kb():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💰 PAID", callback_data="price_paid")],
+            [InlineKeyboardButton(text="🆓 FREE", callback_data="price_free")]
         ]
-    ])
+    )
+
+
+def confirm_kb():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="💾 SAVE", callback_data="upload_save"),
+                InlineKeyboardButton(text="✏️ EDIT", callback_data="upload_edit")
+            ]
+        ]
+    )
 
 
 # =========================
