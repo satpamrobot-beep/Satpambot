@@ -14,6 +14,9 @@ async def init_db():
     )
 
     async with DB_POOL.acquire() as conn:
+        # =========================
+        # CREATE TABLE
+        # =========================
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id BIGINT PRIMARY KEY,
@@ -22,6 +25,31 @@ async def init_db():
             balance_idr BIGINT DEFAULT 0,
             balance_usd NUMERIC DEFAULT 0
         );
+        """)
+
+        # =========================
+        # SAFE MIGRATION (FIX ERROR KAMU)
+        # =========================
+
+        # add column kalau belum ada
+        await conn.execute("""
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS username TEXT;
+        """)
+
+        await conn.execute("""
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS full_name TEXT;
+        """)
+
+        await conn.execute("""
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS balance_idr BIGINT DEFAULT 0;
+        """)
+
+        await conn.execute("""
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS balance_usd NUMERIC DEFAULT 0;
         """)
 
 
