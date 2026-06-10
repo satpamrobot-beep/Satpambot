@@ -1342,7 +1342,7 @@ async def create_bayargg_invoice(amount: int, code: str, uid: int):
                 "amount": amount,
                 "reference": code,
                 "customer_id": uid,
-                "callback_url": "https://satpambot-production.up.railway.app/bayargg-webhook"
+                "callback_url": "https://satpambot-production.up.railway.app/bayargg/webhook"
             }
         )
 
