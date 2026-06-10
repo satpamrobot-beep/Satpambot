@@ -2,6 +2,7 @@ import asyncio
 import sys
 import os
 
+from db.users import ensure_user, get_balance
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
