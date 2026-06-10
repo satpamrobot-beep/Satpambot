@@ -500,9 +500,12 @@ async def get_usd_rate():
             r = await client.get(
                 "https://api.exchangerate.host/latest?base=IDR&symbols=USD"
             )
+
             data = r.json()
 
-            rate = data["rates"]["USD"]
+            rate = data.get("rates", {}).get("USD")
+            if not rate:
+                return USD_RATE_CACHE["rate"]
 
             USD_RATE_CACHE["rate"] = rate
             USD_RATE_CACHE["last_update"] = now
@@ -515,27 +518,27 @@ async def get_usd_rate():
 
 
 # =========================
-# DASHBOARD BUILDER (FIXED)
+# DASHBOARD BUILDER
 # =========================
 async def build_dashboard(user_id: int, username: str):
 
     try:
         balance_rp = await get_balance(user_id)
-    except:
+        balance_rp = balance_rp or 0
+    except Exception:
         balance_rp = 0
 
-    kurs = await get_usd_rate()
-
-    balance_usd = balance_rp * kurs
+    kurs = await get_usd_rate() or 0
+    balance_usd = float(balance_rp) * float(kurs)
 
     text = (
         "🔥 <b>DECODEFILEBOT</b>\n\n"
-        f"👤 Username: @{username}\n"
+        f"👤 Username: @{username or 'user'}\n"
         f"🆔 ID: <code>{user_id}</code>\n"
         f"💰 Saldo: <b>Rp {balance_rp:,} / $ {balance_usd:,.4f}</b>\n\n"
         "━━━━━━━━━━━━━━\n"
         "📌 DASHBOARD MENU\n"
-        "━━━━━━━━━━━━━━\n"
+        "━━━━━━━━━━━━━━"
     )
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -544,7 +547,6 @@ async def build_dashboard(user_id: int, username: str):
             InlineKeyboardButton(text="📥 Getfile", callback_data="getfile"),
         ],
         [
-            
             InlineKeyboardButton(text="💸 Withdraw", callback_data="withdraw"),
         ],
         [
@@ -557,7 +559,7 @@ async def build_dashboard(user_id: int, username: str):
 
 
 # =========================
-# START
+# START COMMAND
 # =========================
 @router.message(F.text == "/start")
 async def start(message: Message, bot: Bot):
@@ -571,25 +573,30 @@ async def start(message: Message, bot: Bot):
     except Exception as e:
         print("ADD USER ERROR:", repr(e))
 
-    # force join
+    # FORCE SUB CHANNEL
     if FORCE_CHANNEL:
         try:
             member = await bot.get_chat_member(FORCE_CHANNEL, user_id)
 
             if member.status not in ("member", "administrator", "creator"):
                 return await message.answer(
-                    "⚠️ AKSES DITOLAK\n\nKamu harus join channel dulu sebelum pakai bot.",
+                    "⚠️ AKSES DITOLAK\n\nJoin channel dulu sebelum pakai bot.",
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton("📢 Join Channel", url=FORCE_CHANNEL_LINK)],
-                        [InlineKeyboardButton("✅ Sudah Join", callback_data="check_sub")]
+                        [InlineKeyboardButton(text="📢 Join Channel", url=FORCE_CHANNEL_LINK)],
+                        [InlineKeyboardButton(text="✅ Sudah Join", callback_data="check_sub")]
                     ])
                 )
+
         except Exception as e:
             print("FORCE SUB ERROR:", repr(e))
 
     text, keyboard = await build_dashboard(user_id, username)
 
-    await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+    await message.answer(
+        text,
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
 
 
 # =========================
@@ -617,50 +624,15 @@ async def home(call: CallbackQuery):
     await call.answer()
 
 # =========================
-# CONFIG
-# =========================
-
-IDR_TO_USD = 16000
-
-def idr_to_usd(idr: int) -> float:
-    try:
-        return round(idr / IDR_TO_USD, 2)
-    except:
-        return 0.0
-
-
-# =========================
-# DEPOSIT KEYBOARD
-# =========================
-
-def deposit_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="2.000", callback_data="dep:2000"),
-            InlineKeyboardButton(text="5.000", callback_data="dep:5000"),
-            InlineKeyboardButton(text="10.000", callback_data="dep:10000"),
-        ],
-        [
-            InlineKeyboardButton(text="15.000", callback_data="dep:15000"),
-            InlineKeyboardButton(text="20.000", callback_data="dep:20000"),
-            InlineKeyboardButton(text="50.000", callback_data="dep:50000"),
-        ],
-        [
-            InlineKeyboardButton(text="🔙 Kembali", callback_data="home")
-        ]
-    ])
-
-# =========================
 # LIMIT CONFIG
 # =========================
-
 MIN_WITHDRAW = 50000
 MAX_WITHDRAW = 500000
+
 
 # =========================
 # BANK / EWALLET / CRYPTO LIST
 # =========================
-
 BANKS = [
     "BCA", "BRI", "BNI", "Mandiri",
     "Permata", "CIMB Niaga", "Danamon",
@@ -678,11 +650,11 @@ CRYPTO = [
     "Binance", "Tokocrypto", "Bitget", "Bybit", "OKX", "PayPal"
 ]
 
+
 # =========================
 # TIMEZONE (WIB)
 # =========================
 WIB = timezone(timedelta(hours=7))
-
 OPEN_HOUR = 9
 CLOSE_HOUR = 20
 
@@ -691,9 +663,6 @@ def now_wib():
     return datetime.now(WIB)
 
 
-# =========================
-# FORMAT DELTA
-# =========================
 def fmt_delta(td: timedelta):
     total = int(td.total_seconds())
     h = total // 3600
@@ -702,9 +671,6 @@ def fmt_delta(td: timedelta):
     return f"{h}j {m}m {s}d"
 
 
-# =========================
-# WITHDRAW STATUS
-# =========================
 def wd_status():
     now = now_wib()
     weekday = now.weekday()
@@ -714,11 +680,11 @@ def wd_status():
         next_open = (now + timedelta(days=(7 - weekday))).replace(
             hour=OPEN_HOUR, minute=0, second=0, microsecond=0
         )
-        return False, next_open, f"⛔ WEEKEND CLOSED\n🕘 Buka lagi dalam {fmt_delta(next_open - now)}"
+        return False, next_open, "⛔ WEEKEND CLOSED"
 
     if hour < OPEN_HOUR:
         next_open = now.replace(hour=OPEN_HOUR, minute=0, second=0, microsecond=0)
-        return False, next_open, f"⏳ BELUM BUKA\n🕘 Buka dalam {fmt_delta(next_open - now)}"
+        return False, next_open, "⏳ BELUM BUKA"
 
     if hour >= CLOSE_HOUR:
         next_open = (now + timedelta(days=1)).replace(
@@ -727,10 +693,10 @@ def wd_status():
         while next_open.weekday() >= 5:
             next_open += timedelta(days=1)
 
-        return False, next_open, f"⛔ TUTUP\n🕘 Buka lagi dalam {fmt_delta(next_open - now)}"
+        return False, next_open, "⛔ TUTUP"
 
     close_time = now.replace(hour=CLOSE_HOUR, minute=0, second=0, microsecond=0)
-    return True, close_time, f"🟢 OPEN\n⏳ Tutup dalam {fmt_delta(close_time - now)}"
+    return True, close_time, "🟢 OPEN"
 
 
 # =========================
@@ -750,7 +716,7 @@ def withdraw_button(is_open: bool):
 
 
 # =========================
-# STATE STORAGE
+# STATE
 # =========================
 user_states = {}
 live_tasks = {}
@@ -764,13 +730,13 @@ async def live_withdraw_panel(message, user_id):
 
     try:
         for _ in range(120):
-            open_status, _, text_status = wd_status()
+            open_status, _, status_text = wd_status()
             now = now_wib().strftime("%H:%M:%S")
 
             panel = (
                 "💸 WITHDRAW CENTER\n\n"
-                f"🕒 WIB: {now}\n\n"
-                f"{text_status}\n\n"
+                f"🕒 WIB: {now}\n"
+                f"{status_text}\n\n"
                 "━━━━━━━━━━━━━━"
             )
 
@@ -803,7 +769,7 @@ async def wd_live(call: CallbackQuery):
 
 
 # =========================
-# CANCEL HANDLER (FIX MISSING)
+# CANCEL
 # =========================
 @router.callback_query(F.data == "wd_cancel")
 async def wd_cancel(call: CallbackQuery):
@@ -821,12 +787,6 @@ async def withdraw_page(call: CallbackQuery):
     user_id = call.from_user.id
 
     async with db_pool.acquire() as conn:
-        await conn.execute("""
-            INSERT INTO users (user_id, balance)
-            VALUES ($1, 0)
-            ON CONFLICT (user_id) DO NOTHING
-        """, user_id)
-
         row = await conn.fetchrow("""
             SELECT balance, wd_method, wd_provider, wd_name, wd_number
             FROM users WHERE user_id=$1
@@ -838,7 +798,7 @@ async def withdraw_page(call: CallbackQuery):
     open_status, _, _ = wd_status()
 
     text = (
-        "💸 <b>WITHDRAW CENTER</b>\n\n"
+        "💸 WITHDRAW CENTER\n\n"
         f"💰 Saldo: Rp {row['balance'] or 0:,}\n"
         f"📌 Status: {'🟢 OPEN' if open_status else '🔴 CLOSED'}\n\n"
         f"🏦 Method: {row['wd_method'] or '-'}\n"
@@ -851,7 +811,6 @@ async def withdraw_page(call: CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton("🔄 LIVE STATUS", callback_data="wd_live")],
         [InlineKeyboardButton("💸 REQUEST WITHDRAW", callback_data="wd_request")],
-        [InlineKeyboardButton("⚙️ SETTINGS", callback_data="wd_settings")],
         [InlineKeyboardButton("🔙 HOME", callback_data="home")]
     ])
 
@@ -859,26 +818,25 @@ async def withdraw_page(call: CallbackQuery):
 
 
 # =========================
-# REQUEST WITHDRAW HANDLER
+# REQUEST WITHDRAW
 # =========================
 @router.callback_query(F.data == "wd_request")
 async def wd_request(call: CallbackQuery):
+
     user_id = call.from_user.id
     state = user_states.setdefault(user_id, {})
 
-    # LOCK agar tidak double click
-    if state.get("wd_block"):
-        return await call.answer("⛔ Withdraw sedang diproses", show_alert=True)
-    state["wd_block"] = True
+    if state.get("lock"):
+        return await call.answer("⛔ sedang diproses", show_alert=True)
+
+    state["lock"] = True
 
     try:
-        # cek sistem buka/tutup
         open_status, _, _ = wd_status()
         if not open_status:
             return await call.answer("🔴 Withdraw tutup", show_alert=True)
 
         async with db_pool.acquire() as conn:
-            # ambil data user
             row = await conn.fetchrow("""
                 SELECT balance, wd_method, wd_provider, wd_name, wd_number
                 FROM users WHERE user_id=$1
@@ -887,16 +845,13 @@ async def wd_request(call: CallbackQuery):
             if not row:
                 return await call.answer("❌ User tidak ditemukan", show_alert=True)
 
-            balance = row["balance"] or 0
-            if balance < MIN_WITHDRAW:
-                return await call.answer(f"❌ Saldo minimal Rp {MIN_WITHDRAW:,}", show_alert=True)
+            if row["balance"] < MIN_WITHDRAW:
+                return await call.answer("❌ saldo kurang", show_alert=True)
 
-            # tampilkan konfirmasi withdraw
             await call.message.edit_text(
-                "💸 KONFIRMASI WITHDRAW\n\n"
-                f"💰 Saldo saat ini: Rp {balance:,}\n"
-                f"🏦 Method: {row['wd_method']} ({row['wd_provider']})\n\n"
-                "Tekan 🚀 CONFIRM untuk melanjutkan",
+                f"💸 KONFIRMASI WITHDRAW\n\n"
+                f"💰 Rp {row['balance']:,}\n\n"
+                "Tekan CONFIRM",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton("🚀 CONFIRM", callback_data="wd_confirm")],
                     [InlineKeyboardButton("🔙 BACK", callback_data="withdraw")]
@@ -904,62 +859,52 @@ async def wd_request(call: CallbackQuery):
             )
 
     except Exception as e:
-        print("WD_REQUEST ERROR:", repr(e))
-        await call.answer("❌ Terjadi kesalahan", show_alert=True)
+        print("WD REQUEST ERROR:", repr(e))
 
     finally:
-        state.pop("wd_block", None)
+        state.pop("lock", None)
 
 
 # =========================
-# CONFIRM / EXECUTE WITHDRAW
+# CONFIRM WITHDRAW
 # =========================
 @router.callback_query(F.data == "wd_confirm")
 async def wd_confirm(call: CallbackQuery):
+
     user_id = call.from_user.id
     state = user_states.setdefault(user_id, {})
 
-    # LOCK agar tidak double click
-    if state.get("wd_block"):
-        return await call.answer("⛔ Withdraw sedang diproses", show_alert=True)
-    state["wd_block"] = True
+    if state.get("lock"):
+        return await call.answer("⛔ sedang diproses", show_alert=True)
+
+    state["lock"] = True
 
     try:
         async with db_pool.acquire() as conn:
-            # ambil saldo + pending withdraw
-            row = await conn.fetchrow("""
-                SELECT balance, wd_method, wd_provider, wd_name, wd_number,
-                    COALESCE((
-                        SELECT SUM(amount) FROM withdraws
-                        WHERE user_id=$1 AND status='pending'
-                    ),0) AS pending_total
-                FROM users WHERE user_id=$1
-            """, user_id)
+            async with conn.transaction():
 
-            if not row:
-                return await call.answer("❌ User tidak ditemukan", show_alert=True)
+                row = await conn.fetchrow("""
+                    SELECT balance, wd_method, wd_provider, wd_name, wd_number
+                    FROM users WHERE user_id=$1
+                    FOR UPDATE
+                """, user_id)
 
-            if not row["wd_method"] or not row["wd_name"] or not row["wd_number"]:
-                return await call.answer("❌ Data withdraw belum lengkap", show_alert=True)
+                if not row:
+                    return await call.answer("❌ user not found")
 
-            balance = row["balance"] or 0
-            pending = row["pending_total"]
-            total_wd = balance + pending
+                if not row["wd_name"] or not row["wd_number"]:
+                    return await call.answer("❌ data belum lengkap")
 
-            if total_wd < MIN_WITHDRAW:
-                return await call.answer(
-                    f"❌ Total saldo ({total_wd:,}) belum cukup",
-                    show_alert=True
-                )
+                balance = row["balance"] or 0
+                if balance < MIN_WITHDRAW:
+                    return await call.answer("❌ saldo kurang")
 
-            # 🔥 Insert withdraw baru (hanya saldo baru, pending tetap)
-            if balance > 0:
                 await conn.execute("""
                     INSERT INTO withdraws(
                         user_id, amount, fee, net_amount,
                         method, account_name, account_number, status
                     )
-                    VALUES($1,$2,0,$2,$3,$4,$5,'pending')
+                    VALUES ($1,$2,0,$2,$3,$4,$5,'pending')
                 """,
                 user_id,
                 balance,
@@ -968,7 +913,6 @@ async def wd_confirm(call: CallbackQuery):
                 row["wd_number"]
                 )
 
-                # reset saldo
                 await conn.execute("""
                     UPDATE users
                     SET balance=0,
@@ -977,685 +921,388 @@ async def wd_confirm(call: CallbackQuery):
                 """, balance, user_id)
 
         await call.message.edit_text(
-            f"⏳ Withdraw pending\n💰 Total pending saat ini: Rp {total_wd:,}\n"
-            "⚠️ Admin akan memproses manual"
+            f"⏳ Withdraw pending\n💰 Rp {balance:,}\n"
         )
 
     except Exception as e:
-        print("WD_CONFIRM ERROR:", repr(e))
-        await call.answer("❌ Terjadi kesalahan", show_alert=True)
+        print("WD CONFIRM ERROR:", repr(e))
 
     finally:
-        state.pop("wd_block", None)
-
+        state.pop("lock", None)
 
 # =========================
-# ADMIN NOTIFY SUCCESS FUNCTION
+# STATE
 # =========================
-async def notify_withdraw_success(user_id: int, amount: int, method: str, provider: str, name: str, number: str):
-    try:
-        await bot.send_message(
-            user_id,
-            f"✅ Withdraw SUKSES!\n\n"
-            f"💰 Total diterima: Rp {amount:,}\n"
-            f"🏦 {method} ({provider})\n"
-            f"👤 {name}\n"
-            f"📌 {number}"
-        )
-    except Exception as e:
-        print("NOTIFY WD SUCCESS ERROR:", repr(e))
-        
+
+MAX_MEDIA = 100
+MAX_SIZE = 2 * 1024 * 1024 * 1024
+
 # =========================
 # KEYBOARD
 # =========================
-
 def upload_kb():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="✅ DONE",
-                    callback_data="upload_done"
-                ),
-                InlineKeyboardButton(
-                    text="❌ CANCEL",
-                    callback_data="upload_cancel"
-                )
-            ]
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton("✅ DONE", callback_data="upload_done"),
+            InlineKeyboardButton("❌ CANCEL", callback_data="upload_cancel")
         ]
-    )
+    ])
+
+
+def price_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton("🆓 FREE", callback_data="price_free")],
+        [InlineKeyboardButton("💰 PAID", callback_data="price_paid")]
+    ])
+
+
+def review_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton("💾 SAVE", callback_data="upload_save"),
+            InlineKeyboardButton("✏️ EDIT", callback_data="upload_edit")
+        ]
+    ])
+
 
 # =========================
-# UP FILE CALLBACK
+# CODE GEN
 # =========================
+def generate_code(v, p, d):
+    rand = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
+    return f"bb_{v}v_{p}p_{d}d_{rand}"
 
+
+# =========================
+# START UPFILE
+# =========================
 @router.callback_query(F.data == "upfile")
-async def up_file(call: CallbackQuery):
+async def upfile(call: CallbackQuery):
 
-    user_id = call.from_user.id
+    uid = call.from_user.id
 
-    # =========================
-    # ANTI SPAM
-    # =========================
-    if not user_limit(user_id):
-        return await call.answer(
-            "⏳ Jangan spam ya 😏",
-            show_alert=True
-        )
-
-    # =========================
-    # RESET SESSION
-    # =========================
-    upload_sessions.pop(user_id, None)
-    user_states.pop(user_id, None)
-    last_edit_time.pop(user_id, None)
-
-    # =========================
-    # SET USER STATE
-    # =========================
-    user_states[user_id] = {
-        "mode": "upload"
-    }
-
-    # =========================
-    # CREATE UPLOAD SESSION
-    # =========================
-    upload_sessions[user_id] = {
+    upload_sessions[uid] = {
         "video": 0,
         "photo": 0,
         "document": 0,
         "items": [],
         "msg_id": call.message.message_id,
         "price": 0,
+        "mode": "upload",
         "share": True,
-        "processing": False,
-        "created_at": time.time()
+        "processing": False
     }
 
-    # =========================
-    # OPEN UPLOAD PANEL
-    # =========================
-    try:
-        await call.message.edit_text(
-            "📤 <b>UPLOAD MODE AKTIF</b>\n\n"
-            "📁 Kirim media kamu sekarang.\n"
-            "🖼 Foto, 🎬 Video, 📄 Dokumen didukung.\n\n"
-            "✅ Tekan DONE jika sudah selesai.\n"
-            "❌ Tekan CANCEL untuk membatalkan.",
-            parse_mode="HTML",
-            reply_markup=upload_kb()
-        )
+    user_states[uid] = {"mode": "upload"}
 
-    except Exception as e:
-        print(f"UPFILE ERROR: {e}")
-
-        await call.message.answer(
-            "📤 Upload mode aktif.\n"
-            "Silakan kirim media kamu."
-        )
+    await call.message.edit_text(
+        "📤 UPLOAD MODE AKTIF\nKirim media sekarang",
+        reply_markup=upload_kb()
+    )
 
     await call.answer()
-# =========================
-# MEDIA HANDLER (FINAL CLEAN)
-# =========================
 
+
+# =========================
+# MEDIA HANDLER
+# =========================
 @router.message(F.photo | F.video | F.document)
-async def handle_media(message: Message):
+async def media_handler(message: Message):
 
-    user_id = message.from_user.id
+    uid = message.from_user.id
 
-    state = user_states.get(user_id)
-    s = upload_sessions.get(user_id)
-
-    if not state or state.get("mode") != "upload":
+    if user_states.get(uid, {}).get("mode") != "upload":
         return
 
+    s = upload_sessions.get(uid)
     if not s:
         return
 
-    # FORCE SAFE DEFAULT
-    s.setdefault("items", [])
-    s.setdefault("photo", 0)
-    s.setdefault("video", 0)
-    s.setdefault("document", 0)
-
-    MAX_MEDIA = 100
-    MAX_TOTAL_SIZE = 2 * 1024 * 1024 * 1024
-
-    file_obj = None
-    file_type = None
-
-    if message.photo:
-        file_obj = message.photo[-1]
-        file_type = "photo"
-    elif message.video:
-        file_obj = message.video
-        file_type = "video"
-    elif message.document:
-        file_obj = message.document
-        file_type = "document"
-
-    if not file_obj:
-        return
-
-    file_id = file_obj.file_id
-    file_size = getattr(file_obj, "file_size", 0) or 0
+    file = message.photo[-1] if message.photo else message.video or message.document
+    ftype = "photo" if message.photo else "video" if message.video else "document"
+    size = getattr(file, "file_size", 0)
 
     if len(s["items"]) >= MAX_MEDIA:
-        try:
-            await message.delete()
-        except:
-            pass
-        return
+        return await message.delete()
 
-    current_size = sum(x.get("size", 0) for x in s["items"])
+    if sum(x["size"] for x in s["items"]) + size > MAX_SIZE:
+        return await message.delete()
 
-    if current_size + file_size > MAX_TOTAL_SIZE:
-        try:
-            await message.delete()
-        except:
-            pass
-        return
-
-    # COUNTER SAFE
-    s[file_type] += 1
-
-    # SAVE
+    s[ftype] += 1
     s["items"].append({
-        "file_id": file_id,
-        "type": file_type,
-        "size": file_size
+        "file_id": file.file_id,
+        "type": ftype,
+        "size": size
     })
 
-    try:
-        await message.delete()
-    except:
-        pass
-
-    now = time.time()
-
-    if now - last_edit_time.get(user_id, 0) < 1.5:
-        return
-
-    last_edit_time[user_id] = now
-
+    v, p, d = s["video"], s["photo"], s["document"]
     total = len(s["items"])
-    total_size = sum(x.get("size", 0) for x in s["items"])
-    size_mb = round(total_size / (1024 * 1024), 2)
 
-    progress = min(100, int((total / MAX_MEDIA) * 100))
-
+    progress = int(total / MAX_MEDIA * 100)
     bar = "█" * (progress // 10) + "░" * (10 - (progress // 10))
 
+    size_mb = round(sum(x["size"] for x in s["items"]) / 1024 / 1024, 2)
+
     text = (
-        "📤 <b>UPLOAD MODE</b>\n\n"
-        f"📊 [{bar}] {progress}%\n\n"
-        f"📁 Total File : <b>{total}</b>\n"
-        f"🖼 Photo      : {s['photo']}\n"
-        f"🎬 Video      : {s['video']}\n"
-        f"📄 Document   : {s['document']}\n"
-        f"💾 Size       : {size_mb} MB\n\n"
-        "━━━━━━━━━━━━━━\n"
-        "✅ Tekan DONE jika selesai"
+        f"📤 UPLOAD PROGRESS\n\n"
+        f"{bar} {progress}%\n"
+        f"🎬 {v} | 🖼 {p} | 📄 {d} (total {total})\n"
+        f"💾 {size_mb} MB"
     )
 
+    now = time.time()
+    if now - last_edit_time.get(uid, 0) < 1.2:
+        return
+    last_edit_time[uid] = now
+
     try:
-        await safe_send(
-            message.bot.edit_message_text,
+        await message.bot.edit_message_text(
             chat_id=message.chat.id,
             message_id=s["msg_id"],
             text=text,
-            parse_mode="HTML",
             reply_markup=upload_kb()
         )
-    except Exception as e:
-        print("UPLOAD PANEL ERROR:", e)
-    
-# =========================
-# GENERATE CODE
-# =========================
+    except:
+        pass
 
-def generate_code(v, p, d):
-    import hashlib
-    import secrets
-
-    base = f"{v}{p}{d}{secrets.token_hex(4)}"
-    rand = hashlib.sha1(base.encode()).hexdigest()[:12]
-
-    return f"bluebirdbot_{v}v_{p}p_{d}d_{rand}"
+    await message.delete()
 
 
 # =========================
-# PRICE TYPE KB
+# DONE → PRICE
 # =========================
-
-def price_type_kb():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="💰 Berbayar",
-                    callback_data="price_paid"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🆓 Gratis",
-                    callback_data="price_free"
-                )
-            ]
-        ]
-    )
-def media_system_kb():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="✅ Share File",
-                    callback_data="media_share"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="❌ No Share",
-                    callback_data="media_noshare"
-                )
-            ]
-        ]
-    )
-
-# =========================
-# UPLOAD DONE
-# =========================
-
 @router.callback_query(F.data == "upload_done")
 async def done(call: CallbackQuery):
 
-    user_id = call.from_user.id
-    s = upload_sessions.get(user_id)
+    uid = call.from_user.id
+    s = upload_sessions.get(uid)
 
-    if not s or not s.get("items"):
-        return await call.answer(
-            "😏 Belum ada media yang diupload",
-            show_alert=True
-        )
+    if not s or not s["items"]:
+        return await call.answer("Belum ada file", show_alert=True)
 
-    user_states[user_id] = {
-        "mode": "choose_price_type"
-    }
+    user_states[uid] = {"mode": "price"}
 
-    await call.message.edit_text(
-        "💰 Pilih jenis produk:",
-        reply_markup=price_type_kb()
-    )
-
-    await call.answer()
+    await call.message.edit_text("Pilih tipe:", reply_markup=price_kb())
 
 
 # =========================
-# PRICE PAID
+# FREE
 # =========================
-
-@router.callback_query(F.data == "price_paid")
-async def price_paid(call: CallbackQuery):
-
-    user_id = call.from_user.id
-
-    user_states[user_id] = {
-        "mode": "set_price"
-    }
-
-    await call.message.edit_text(
-        "💰 Masukkan harga media\n\n"
-        "Minimal Rp1.000\n"
-        "Maksimal Rp100.000\n\n"
-        "Kirim angka saja."
-    )
-
-    await call.answer()
-
-
-# =========================
-# PRICE FREE
-# =========================
-
 @router.callback_query(F.data == "price_free")
 async def price_free(call: CallbackQuery):
 
-    user_id = call.from_user.id
+    uid = call.from_user.id
+    s = upload_sessions[uid]
 
-    session = upload_sessions.get(user_id)
+    s["price"] = 0
+    user_states[uid] = {"mode": "review"}
 
-    if not session:
-        return await call.answer(
-            "❌ Session upload hilang",
-            show_alert=True
-        )
+    await show_review(call, uid)
 
-    session["price"] = 0
 
-    user_states[user_id]["mode"] = "set_media_system"
+# =========================
+# PAID
+# =========================
+@router.callback_query(F.data == "price_paid")
+async def price_paid(call: CallbackQuery):
 
-    await call.message.edit_text(
-        "🆓 Produk Gratis\n\n"
-        "Pilih sistem media:",
-        reply_markup=media_system_kb()
-    )
+    uid = call.from_user.id
+    user_states[uid] = {"mode": "set_price"}
 
-    await call.answer()
+    await call.message.edit_text("Masukkan harga (min 1000)")
 
 
 # =========================
 # SET PRICE
 # =========================
+@router.message(F.text)
+async def set_price(message: Message):
 
-@router.message(
-    F.text,
-    lambda m: user_states.get(m.from_user.id, {}).get("mode") == "set_price"
-)
-async def handle_price_input(message: Message):
+    uid = message.from_user.id
 
-    user_id = message.from_user.id
-
-    print("=" * 50)
-    print("SET_PRICE KEPANGGIL")
-    print("USER:", user_id)
-    print("STATE:", user_states.get(user_id))
-    print("TEXT:", message.text)
-    print("=" * 50)
-
-    state = user_states.get(user_id)
-
-    if not state:
+    if user_states.get(uid, {}).get("mode") != "set_price":
         return
 
-    if state.get("mode") != "set_price":
-        return
-
-    session = upload_sessions.get(user_id)
-
-    if not session:
-        return await message.answer(
-            "❌ Session upload hilang.\nSilakan upload ulang."
-        )
-
-    text = (
-        message.text.strip()
-        .replace(".", "")
-        .replace(",", "")
-        .replace(" ", "")
-    )
-
-    print("TEXT CLEAN =", text)
-
-    if not text.isdigit():
-        return await message.answer(
-            "❌ Harga harus berupa angka.\n\n"
-            "Contoh:\n"
-            "2000\n"
-            "2.000\n"
-            "20000"
-        )
+    s = upload_sessions.get(uid)
 
     try:
-        price = int(text)
-    except ValueError:
-        return await message.answer(
-            "❌ Format harga tidak valid"
-        )
+        price = int(message.text)
+    except:
+        return await message.answer("Angka tidak valid")
 
     if price < 1000:
-        return await message.answer(
-            "❌ Minimal harga Rp1.000"
+        return await message.answer("Minimal 1000")
+
+    s["price"] = price
+    user_states[uid] = {"mode": "review"}
+
+    await show_review(message, uid)
+
+
+# =========================
+# REVIEW
+# =========================
+async def show_review(event, uid):
+
+    s = upload_sessions[uid]
+    v, p, d = s["video"], s["photo"], s["document"]
+    total = len(s["items"])
+
+    text = (
+        f"📦 REVIEW\n\n"
+        f"🎬 {v} | 🖼 {p} | 📄 {d} (total {total})\n"
+        f"💰 Price: {s['price']}"
+    )
+
+    if isinstance(event, CallbackQuery):
+        await event.message.edit_text(text, reply_markup=review_kb())
+    else:
+        await event.answer(text)
+
+
+# =========================
+# EDIT (BACK TO UPLOAD)
+# =========================
+@router.callback_query(F.data == "upload_edit")
+async def edit(call: CallbackQuery):
+
+    uid = call.from_user.id
+
+    user_states[uid] = {"mode": "upload"}
+
+    await call.message.edit_text(
+        "📤 Lanjut upload media...",
+        reply_markup=upload_kb()
+    )
+
+# =========================
+# BAYARGG CREATE INVOICE (REAL)
+# =========================
+async def create_bayargg_invoice(amount: int, code: str, uid: int):
+    async with httpx.AsyncClient(timeout=30) as client:
+        res = await client.post(
+            f"{BAYARGG_URL}/api/invoice/create",
+            headers={
+                "Authorization": f"Bearer {BAYARGG_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "amount": amount,
+                "reference": code,
+                "customer_id": uid,
+                "callback_url": "https://satpambot-production.up.railway.app/bayargg-webhook"
+            }
         )
 
-    if price > 100000:
-        return await message.answer(
-            "❌ Maksimal harga Rp100.000"
-        )
+    data = res.json()
 
-    session["price"] = price
+    if not data.get("success"):
+        raise Exception(f"QRIS ERROR: {data}")
 
-    user_states[user_id]["mode"] = "set_media_system"
+    return data["data"]  # harus ada invoice_id + qr_url
 
-    await message.answer(
-        f"💰 Harga diset Rp {price:,}".replace(",", ".") +
-        "\n\nPilih sistem media:",
-        reply_markup=media_system_kb()
-    )
+
 # =========================
-# MEDIA SYSTEM
+# SAVE FINAL (PRODUCTION REAL)
 # =========================
+@router.callback_query(F.data == "upload_save")
+async def save(call: CallbackQuery):
 
-@router.callback_query(
-    F.data.in_(
-        ["media_share", "media_noshare"]
-    )
-)
-async def media_system(call: CallbackQuery):
-
-    user_id = call.from_user.id
-
-    s = upload_sessions.get(user_id)
+    uid = call.from_user.id
+    s = upload_sessions.get(uid)
 
     if not s:
-        return
-
-    s["share"] = (
-        call.data == "media_share"
-    )
-
-    await save_upload(call)
-
-
-# =========================
-# SAVE UPLOAD
-# =========================
-
-async def save_upload(call: CallbackQuery):
-
-    user_id = call.from_user.id
-    s = upload_sessions.get(user_id)
-
-    if not s:
-        return
+        return await call.answer("Session tidak ditemukan")
 
     if s.get("processing"):
-        return await call.answer(
-            "⏳ Sedang diproses..."
-        )
+        return await call.answer("Processing...")
 
     s["processing"] = True
 
-    try:
+    # =========================
+    # GENERATE CODE STABLE
+    # =========================
+    code = generate_code(s["video"], s["photo"], s["document"])
 
-        # =========================
-        # GENERATE CODE
-        # =========================
-        code = generate_code(
-            s.get("video", 0),
-            s.get("photo", 0),
-            s.get("document", 0)
-        )
-
-        # =========================
-        # STATS
-        # =========================
-        total_items = len(s["items"])
-
-        total_size = sum(
-            item.get("size", 0)
-            for item in s["items"]
-        )
-
-        # =========================
-        # CREATOR
-        # =========================
-        creator = (
-            f"@{call.from_user.username}"
-            if call.from_user.username
-            else call.from_user.full_name
-        )
-
-        # =========================
-        # SETTINGS
-        # =========================
-        media_price = s.get("price", 0)
-        share_enabled = s.get("share", True)
-
-        price_text = (
-            f"Rp {media_price:,}"
-            if media_price > 0
-            else "Free"
-        )
-
-        media_system_text = (
-            "🔓 Share"
-            if share_enabled
-            else "🔒 No Share"
-        )
-
-        # =========================
-        # SAVE DATABASE
-        # =========================
-        async with db_pool.acquire() as conn:
-
-            await conn.execute(
-                """
-                INSERT INTO codes(
-                    code,
-                    owner_id,
-                    total_media,
-                    total_size
-                )
-                VALUES($1,$2,$3,$4)
-                """,
-                code,
-                user_id,
-                total_items,
-                total_size
-            )
-
-            rows = []
-
-            for item in s["items"]:
-
-                rows.append(
-                    (
-                        code,
-                        item["file_id"],
-                        item["type"],
-                        item["size"]
-                    )
-                )
-
-            if rows:
-
-                await conn.executemany(
-                    """
-                    INSERT INTO medias(
-                        code,
-                        file_id,
-                        file_type,
-                        file_size
-                    )
-                    VALUES($1,$2,$3,$4)
-                    """,
-                    rows
-                )
-
-        # =========================
-        # SUCCESS PANEL
-        # =========================
-        await call.message.edit_text(
-            f"""
-✅ <b>Done Complete</b>
-
-🔑 <b>Code :</b>
-<code>{code}</code>
-
-📁 <b>Total Media :</b> {total_items}
-💾 <b>Total Size :</b> {round(total_size / (1024 * 1024), 2)} MB
-
-💰 <b>Price Media :</b> {price_text}
-📡 <b>Sistem Media :</b> {media_system_text}
-👤 <b>Create By :</b> {creator}
-
-🚀 <b>Media berhasil disimpan</b>
-            """,
-            parse_mode="HTML"
-        )
-
-    except Exception as e:
-
-        print("SAVE ERROR:", e)
-
-        try:
-            await call.message.edit_text(
-                "❌ Gagal proses upload"
-            )
-        except Exception:
-            pass
-
-    finally:
-
-        # =========================
-        # CLEAN SESSION
-        # =========================
-        upload_sessions.pop(user_id, None)
-        user_states.pop(user_id, None)
-        last_edit_time.pop(user_id, None)
-        
-# =========================
-# CANCEL HANDLER
-# =========================
-
-@router.callback_query(F.data == "upload_cancel")
-async def cancel(call: CallbackQuery):
-
-    user_id = call.from_user.id
-    username = call.from_user.username or "No Username"
+    total = len(s["items"])
+    size = sum(i["size"] for i in s["items"])
+    now = datetime.utcnow().isoformat()
 
     # =========================
-    # CLEAN SESSION
+    # 1. SAVE TO SUPABASE (PERMANENT)
     # =========================
-    upload_sessions.pop(user_id, None)
-    user_states.pop(user_id, None)
-    last_edit_time.pop(user_id, None)
+    supabase.table("uploads").insert({
+        "code": code,
+        "owner_id": uid,
+        "video": s["video"],
+        "photo": s["photo"],
+        "document": s["document"],
+        "total_media": total,
+        "total_size": size,
+        "price": s["price"],
+        "share": s["share"],
+        "created_at": now,
+        "status": "active",
+        "payment_status": "free" if s["price"] == 0 else "pending"
+    }).execute()
 
-    try:
+    # =========================
+    # 2. SAVE MEDIA LIST
+    # =========================
+    supabase.table("media_files").insert([
+        {
+            "code": code,
+            "file_id": i["file_id"],
+            "file_type": i["type"],
+            "file_size": i["size"]
+        }
+        for i in s["items"]
+    ]).execute()
 
-        # =========================
-        # BUILD DASHBOARD
-        # =========================
-        text, keyboard = await build_dashboard(
-            user_id,
-            username
+    # =========================
+    # 3. QRIS REAL (BAYARGG)
+    # =========================
+    invoice_id = None
+    qr_url = None
+
+    if s["price"] > 0:
+
+        invoice = await create_bayargg_invoice(
+            amount=s["price"],
+            code=code,
+            uid=uid
         )
 
-        # =========================
-        # RETURN TO HOME
-        # =========================
-        await call.message.edit_text(
-            text,
-            parse_mode="HTML",
-            reply_markup=keyboard
-        )
+        invoice_id = invoice["invoice_id"]
+        qr_url = invoice.get("qr_url")
 
-    except Exception as e:
+        # update DB dengan invoice real
+        supabase.table("uploads").update({
+            "invoice_id": invoice_id,
+            "qr_url": qr_url
+        }).eq("code", code).execute()
 
-        print("CANCEL ERROR:", e)
-
-        try:
-            await call.message.answer(
-                "🏠 Upload dibatalkan."
-            )
-        except Exception:
-            pass
-
-    await call.answer(
-        "❌ Upload dibatalkan"
+    # =========================
+    # FINAL MESSAGE
+    # =========================
+    await call.message.edit_text(
+        "✅ <b>UPLOAD CREATED</b>\n\n"
+        f"🔑 Code: <code>{code}</code>\n"
+        f"📁 Total: {total} media\n"
+        f"💾 Size: {round(size/1024/1024,2)} MB\n"
+        f"💰 Price: {s['price']}\n"
+        f"📡 Share: {'YES' if s['share'] else 'NO'}\n"
+        f"🧾 Invoice: {invoice_id or 'FREE'}\n\n"
+        "⚡ Code ini TETAP VALID walau bot restart / pindah server",
+        parse_mode="HTML"
     )
+
+    # =========================
+    # CLEAN LOCAL SESSION ONLY
+    # =========================
+    upload_sessions.pop(uid, None)
+    user_states.pop(uid, None)
+    last_edit_time.pop(uid, None)
 
 # =========================
 # NORMALIZER
