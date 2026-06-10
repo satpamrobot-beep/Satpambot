@@ -2,24 +2,33 @@ import asyncio
 import sys
 import os
 
-# =========================
-# FIX PATH (WAJIB PALING ATAS)
-# =========================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(BASE_DIR)
-
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 
 from core.config import BOT_TOKEN
 from db.pool import init_db
 from bot.router import router
 
 
+# =========================
+# FIX PATH (WAJIB PALING ATAS)
+# =========================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(BASE_DIR)
+
+
 async def main():
     # =========================
-    # INIT BOT
+    # INIT BOT (FIX AIogram 3.22)
     # =========================
-    bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
+    bot = Bot(
+        token=BOT_TOKEN,
+        default=DefaultBotProperties(
+            parse_mode=ParseMode.HTML
+        )
+    )
+
     dp = Dispatcher()
 
     # =========================
