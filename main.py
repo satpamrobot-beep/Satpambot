@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 from fastapi import FastAPI, Request, HTTPException
 
-from aiogram import Bot, Router, F
+from aiogram import Bot, Dispatcher, Router, F
 from aiogram.filters import CommandStart
 from aiogram.types import (
     Message,
