@@ -767,9 +767,17 @@ async def wd_live(call: CallbackQuery):
     await call.answer()
     user_id = call.from_user.id
 
-    # stop old loop
+    # STOP FLAG
     withdraw_live_flag[user_id] = False
 
+    # STOP TASK LAMA (INI YANG KAMU LEWATKAN)
+    task = live_tasks.get(user_id)
+    if task and not task.done():
+        task.cancel()
+
+    live_tasks.pop(user_id, None)
+
+    # START BARU
     live_tasks[user_id] = asyncio.create_task(
         live_withdraw_panel(call.message, user_id)
     )
@@ -778,25 +786,29 @@ async def toggle_withdraw(call: CallbackQuery):
 
     now = time.time()
 
+    # toggle state
     if withdraw_state["open"]:
-        # kalau lagi OPEN → tutup
         withdraw_state["open"] = False
         withdraw_state["close_at"] = None
         text = "WITHDRAW CLOSED 🔴"
     else:
-        # kalau buka lagi → set 6 jam
         withdraw_state["open"] = True
         withdraw_state["close_at"] = now + 6 * 3600
         text = "WITHDRAW OPEN 🟢 (6 JAM)"
 
     await call.answer(text, show_alert=True)
 
-    try:
-        await call.message.edit_reply_markup(
-            reply_markup=withdraw_button(withdraw_state["open"])
-        )
-    except:
-        pass
+    # OPTIONAL: paksa refresh panel kalau live aktif
+    user_id = call.from_user.id
+    task = live_tasks.get(user_id)
+
+    if task and not task.done():
+        try:
+            await call.message.edit_reply_markup(
+                reply_markup=withdraw_button(withdraw_state["open"])
+            )
+        except:
+            pass
 # =========================
 # CANCEL
 # =========================
