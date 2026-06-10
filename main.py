@@ -1230,13 +1230,19 @@ async def done(call: CallbackQuery):
     s = upload_sessions.get(uid)
 
     if not s or not s["items"]:
-        return await call.answer("Belum ada file", show_alert=True)
+        return await call.answer(
+            "Belum ada file",
+            show_alert=True
+        )
 
-    user_states[uid] = {"mode": "price"}
+    user_states[uid] = {
+        "mode": "price"
+    }
 
-    await call.message.edit_text("Pilih tipe:", reply_markup=price_kb())
-
-
+    await call.message.edit_text(
+        "Pilih tipe:",
+        reply_markup=price_type_kb()
+    )
 # =========================
 # FREE
 # =========================
