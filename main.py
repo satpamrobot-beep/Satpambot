@@ -2,18 +2,17 @@ import asyncio
 import sys
 import os
 
+# =========================
+# FIX PATH (WAJIB PALING ATAS)
+# =========================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(BASE_DIR)
+
 from aiogram import Bot, Dispatcher
 
 from core.config import BOT_TOKEN
 from db.pool import init_db
 from bot.router import router
-
-
-# =========================
-# FIX PATH (ANTI MODULE ERROR)
-# =========================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(BASE_DIR)
 
 
 async def main():
@@ -47,12 +46,8 @@ async def main():
         await dp.start_polling(bot)
     except Exception as e:
         print("❌ BOT CRASH:", repr(e))
-
     finally:
-        try:
-            await bot.session.close()
-        except Exception as e:
-            print("❌ BOT CLOSE ERROR:", repr(e))
+        await bot.session.close()
 
 
 if __name__ == "__main__":
