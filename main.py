@@ -770,17 +770,20 @@ async def wd_live(call: CallbackQuery):
     await call.answer()
     user_id = call.from_user.id
 
-    # STOP FLAG
+    # 🔥 STOP TOTAL
     withdraw_live_flag[user_id] = False
 
-    # STOP TASK LAMA (INI YANG KAMU LEWATKAN)
     task = live_tasks.get(user_id)
     if task and not task.done():
         task.cancel()
+        try:
+            await task
+        except:
+            pass
 
     live_tasks.pop(user_id, None)
 
-    # START BARU
+    # 🔥 START BARU (SETELAH BERSIH)
     live_tasks[user_id] = asyncio.create_task(
         live_withdraw_panel(call.message, user_id)
     )
