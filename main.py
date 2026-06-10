@@ -25,6 +25,7 @@ from fastapi import FastAPI, Request, HTTPException
 
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.filters import CommandStart
+from aiogram.filters import Command
 from aiogram.types import (
     Message,
     CallbackQuery,
@@ -790,32 +791,59 @@ async def withdraw_page(call: CallbackQuery):
     async with db_pool.acquire() as conn:
         row = await conn.fetchrow("""
             SELECT balance, wd_method, wd_provider, wd_name, wd_number
-            FROM users WHERE user_id=$1
+            FROM users
+            WHERE user_id = $1
         """, user_id)
 
     if not row:
-        return await call.message.edit_text("❌ User tidak ditemukan")
+        return await call.message.edit_text(
+            "❌ User tidak ditemukan"
+        )
 
     open_status, _, _ = wd_status()
 
     text = (
-        "💸 WITHDRAW CENTER\n\n"
+        "💸 <b>WITHDRAW CENTER</b>\n\n"
         f"💰 Saldo: Rp {row['balance'] or 0:,}\n"
         f"📌 Status: {'🟢 OPEN' if open_status else '🔴 CLOSED'}\n\n"
         f"🏦 Method: {row['wd_method'] or '-'}\n"
         f"📱 Provider: {row['wd_provider'] or '-'}\n"
         f"👤 Nama: {row['wd_name'] or '-'}\n"
         f"📌 Nomor: {row['wd_number'] or '-'}\n\n"
-        f"Min: Rp {MIN_WITHDRAW:,} | Max: Rp {MAX_WITHDRAW:,}"
+        f"📋 Min: Rp {MIN_WITHDRAW:,}\n"
+        f"📋 Max: Rp {MAX_WITHDRAW:,}"
     )
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("🔄 LIVE STATUS", callback_data="wd_live")],
-        [InlineKeyboardButton("💸 REQUEST WITHDRAW", callback_data="wd_request")],
-        [InlineKeyboardButton("🔙 HOME", callback_data="home")]
-    ])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🔄 LIVE STATUS",
+                    callback_data="wd_live"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💸 REQUEST WITHDRAW",
+                    callback_data="wd_request"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔙 HOME",
+                    callback_data="home"
+                )
+            ]
+        ]
+    )
 
-    await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    await call.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=kb
+    )
+
+    await call.answer()
 
 
 # =========================
@@ -828,36 +856,71 @@ async def wd_request(call: CallbackQuery):
     state = user_states.setdefault(user_id, {})
 
     if state.get("lock"):
-        return await call.answer("⛔ sedang diproses", show_alert=True)
+        return await call.answer(
+            "⛔ sedang diproses",
+            show_alert=True
+        )
 
     state["lock"] = True
 
     try:
         open_status, _, _ = wd_status()
+
         if not open_status:
-            return await call.answer("🔴 Withdraw tutup", show_alert=True)
+            return await call.answer(
+                "🔴 Withdraw tutup",
+                show_alert=True
+            )
 
         async with db_pool.acquire() as conn:
             row = await conn.fetchrow("""
-                SELECT balance, wd_method, wd_provider, wd_name, wd_number
-                FROM users WHERE user_id=$1
+                SELECT balance,
+                       wd_method,
+                       wd_provider,
+                       wd_name,
+                       wd_number
+                FROM users
+                WHERE user_id = $1
             """, user_id)
 
-            if not row:
-                return await call.answer("❌ User tidak ditemukan", show_alert=True)
-
-            if row["balance"] < MIN_WITHDRAW:
-                return await call.answer("❌ saldo kurang", show_alert=True)
-
-            await call.message.edit_text(
-                f"💸 KONFIRMASI WITHDRAW\n\n"
-                f"💰 Rp {row['balance']:,}\n\n"
-                "Tekan CONFIRM",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton("🚀 CONFIRM", callback_data="wd_confirm")],
-                    [InlineKeyboardButton("🔙 BACK", callback_data="withdraw")]
-                ])
+        if not row:
+            return await call.answer(
+                "❌ User tidak ditemukan",
+                show_alert=True
             )
+
+        if row["balance"] < MIN_WITHDRAW:
+            return await call.answer(
+                "❌ Saldo kurang",
+                show_alert=True
+            )
+
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🚀 CONFIRM",
+                        callback_data="wd_confirm"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🔙 BACK",
+                        callback_data="withdraw"
+                    )
+                ]
+            ]
+        )
+
+        await call.message.edit_text(
+            f"💸 <b>KONFIRMASI WITHDRAW</b>\n\n"
+            f"💰 Rp {row['balance']:,}\n\n"
+            "Tekan tombol CONFIRM untuk melanjutkan.",
+            parse_mode="HTML",
+            reply_markup=kb
+        )
+
+        await call.answer()
 
     except Exception as e:
         print("WD REQUEST ERROR:", repr(e))
@@ -1304,6 +1367,26 @@ async def save(call: CallbackQuery):
     upload_sessions.pop(uid, None)
     user_states.pop(uid, None)
     last_edit_time.pop(uid, None)
+
+# =========================
+# DBCHECK
+# =========================
+
+@router.message(Command("dbcheck"))
+async def dbcheck(message: Message):
+
+    async with db_pool.acquire() as conn:
+
+        rows = await conn.fetch("""
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema='public'
+            ORDER BY table_name
+        """)
+
+    await message.answer(
+        "\n".join(r["table_name"] for r in rows)
+    )
 
 # =========================
 # NORMALIZER
