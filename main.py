@@ -1099,54 +1099,125 @@ async def media_handler(message: Message):
     if not s:
         return
 
-    file = message.photo[-1] if message.photo else message.video or message.document
-    ftype = "photo" if message.photo else "video" if message.video else "document"
+    file = (
+        message.photo[-1]
+        if message.photo
+        else message.video
+        if message.video
+        else message.document
+    )
+
+    ftype = (
+        "photo"
+        if message.photo
+        else "video"
+        if message.video
+        else "document"
+    )
+
     size = getattr(file, "file_size", 0)
 
+    # =========================
+    # LIMIT CHECK
+    # =========================
     if len(s["items"]) >= MAX_MEDIA:
-        return await message.delete()
+        try:
+            await message.delete()
+        except:
+            pass
+        return
 
-    if sum(x["size"] for x in s["items"]) + size > MAX_SIZE:
-        return await message.delete()
+    current_size = sum(x["size"] for x in s["items"])
 
+    if current_size + size > MAX_SIZE:
+        try:
+            await message.delete()
+        except:
+            pass
+        return
+
+    # =========================
+    # SAVE MEDIA
+    # =========================
     s[ftype] += 1
+
     s["items"].append({
         "file_id": file.file_id,
         "type": ftype,
         "size": size
     })
 
-    v, p, d = s["video"], s["photo"], s["document"]
+    # DEBUG
+    print(
+        f"UPLOAD {uid} | "
+        f"{ftype} | "
+        f"TOTAL={len(s['items'])}"
+    )
+
+    # =========================
+    # BUILD PROGRESS
+    # =========================
+    v = s["video"]
+    p = s["photo"]
+    d = s["document"]
+
     total = len(s["items"])
 
-    progress = int(total / MAX_MEDIA * 100)
-    bar = "█" * (progress // 10) + "░" * (10 - (progress // 10))
+    progress = min(
+        int((total / MAX_MEDIA) * 100),
+        100
+    )
 
-    size_mb = round(sum(x["size"] for x in s["items"]) / 1024 / 1024, 2)
+    filled = progress // 10
+
+    bar = (
+        "█" * filled +
+        "░" * (10 - filled)
+    )
+
+    size_mb = round(
+        sum(x["size"] for x in s["items"])
+        / 1024 / 1024,
+        2
+    )
 
     text = (
-        f"📤 UPLOAD PROGRESS\n\n"
+        "📤 UPLOAD PROGRESS\n\n"
         f"{bar} {progress}%\n"
-        f"🎬 {v} | 🖼 {p} | 📄 {d} (total {total})\n"
+        f"🎬 {v} | 🖼 {p} | 📄 {d}\n"
+        f"📦 Total: {total}\n"
         f"💾 {size_mb} MB"
     )
 
+    # =========================
+    # THROTTLE EDIT MESSAGE
+    # =========================
     now = time.time()
-    if now - last_edit_time.get(uid, 0) < 1.2:
-        return
-    last_edit_time[uid] = now
 
+    if now - last_edit_time.get(uid, 0) >= 1.2:
+
+        last_edit_time[uid] = now
+
+        try:
+            await message.bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=s["msg_id"],
+                text=text,
+                reply_markup=upload_kb()
+            )
+        except Exception as e:
+            print(
+                "UPLOAD EDIT ERROR:",
+                repr(e)
+            )
+
+    # =========================
+    # DELETE USER MEDIA
+    # =========================
     try:
-        await message.bot.edit_message_text(
-            chat_id=message.chat.id,
-            message_id=s["msg_id"],
-            text=text,
-            reply_markup=upload_kb()
-        )
+        await message.delete()
     except:
         pass
-
-    await message.delete()
 
 
 # =========================
