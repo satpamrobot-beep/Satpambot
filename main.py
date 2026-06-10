@@ -188,8 +188,10 @@ upload_sessions = {}
 user_states = {}
 last_edit_time = {}
 force_cache = {}
-
+pagination_lock = {}
 COOLDOWN_TIME = 5
+withdraw_live_flag = {}
+live_tasks = {}
 
 # lock untuk pagination (anti race UI)
 pagination_lock = defaultdict(asyncio.Lock)
@@ -704,23 +706,22 @@ def withdraw_button(is_open: bool):
                 )
             ]
         ]
-    )
-
-# =========================
-# STATE
-# =========================
-user_states = {}
-live_tasks = {}
 
 
 # =========================
 # LIVE PANEL
 # =========================
 async def live_withdraw_panel(message, user_id):
+
     last_text = None
+    withdraw_live_flag[user_id] = True
 
     try:
         for _ in range(120):
+
+            if not withdraw_live_flag.get(user_id):
+                break
+
             open_status, _, status_text = wd_status()
             now = now_wib().strftime("%H:%M:%S")
 
@@ -732,8 +733,14 @@ async def live_withdraw_panel(message, user_id):
             )
 
             if panel != last_text:
-                await message.edit_text(panel, reply_markup=withdraw_button(open_status))
-                last_text = panel
+                try:
+                    await message.edit_text(
+                        panel,
+                        reply_markup=withdraw_button(open_status)
+                    )
+                    last_text = panel
+                except:
+                    pass
 
             await asyncio.sleep(5)
 
@@ -742,23 +749,21 @@ async def live_withdraw_panel(message, user_id):
 
     finally:
         live_tasks.pop(user_id, None)
+        withdraw_live_flag[user_id] = False
 
 
 @router.callback_query(F.data == "wd_live")
 async def wd_live(call: CallbackQuery):
-    await call.answer()
 
+    await call.answer()
     user_id = call.from_user.id
 
-    task = live_tasks.get(user_id)
-    if task and not task.done():
-        task.cancel()
+    # stop old loop
+    withdraw_live_flag[user_id] = False
 
     live_tasks[user_id] = asyncio.create_task(
         live_withdraw_panel(call.message, user_id)
     )
-
-
 # =========================
 # CANCEL
 # =========================
