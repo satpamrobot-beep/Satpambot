@@ -24,8 +24,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Request, HTTPException
 
 from aiogram import Bot, Dispatcher, Router, F
-from aiogram.filters import CommandStart
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     Message,
     CallbackQuery,
@@ -1372,8 +1371,9 @@ async def save(call: CallbackQuery):
 # DBCHECK
 # =========================
 
-@router.message(Command("dbcheck"))
+@router.message(F.text == "/dbcheck")
 async def dbcheck(message: Message):
+
 
     try:
 
