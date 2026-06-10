@@ -688,12 +688,6 @@ def withdraw_button(is_open: bool):
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="🟢 WITHDRAW OPEN" if is_open else "🔴 WITHDRAW CLOSED",
-                    callback_data="wd_open" if is_open else "wd_closed"
-                )
-            ],
-            [
-                InlineKeyboardButton(
                     text="💸 REQUEST WITHDRAW",
                     callback_data="wd_request"
                 )
@@ -705,28 +699,6 @@ def withdraw_button(is_open: bool):
                 )
             ]
         ]
-    )
-# =========================
-# WD TOGGLE
-# =========================
-@router.callback_query(F.data == "wd_toggle")
-async def toggle_withdraw(call: CallbackQuery):
-
-    now = time.time()
-
-    if withdraw_state["open"]:
-        withdraw_state["open"] = False
-        withdraw_state["close_at"] = None
-        text = "WITHDRAW CLOSED 🔴"
-    else:
-        withdraw_state["open"] = True
-        withdraw_state["close_at"] = now + 6 * 3600
-        text = "WITHDRAW OPEN 🟢 (6 JAM)"
-
-    await call.answer(text, show_alert=True)
-
-    await call.message.edit_reply_markup(
-        reply_markup=withdraw_button(withdraw_state["open"])
     )
 # =========================
 # CANCEL
@@ -754,46 +726,65 @@ async def withdraw_page(call: CallbackQuery):
         """, user_id)
 
     if not row:
-        return await call.message.edit_text(
-            "❌ User tidak ditemukan"
-        )
+        return await call.message.edit_text("❌ User tidak ditemukan")
 
-    open_status, _, _ = wd_status()
+    open_status, next_time, status_text = wd_status()
+
+    balance = row["balance"] or 0
 
     text = (
-        "💸 <b>WITHDRAW CENTER</b>\n\n"
-        f"💰 Saldo: Rp {row['balance'] or 0:,}\n"
-        f"📌 Status: {'🟢 OPEN' if open_status else '🔴 CLOSED'}\n\n"
-        f"🏦 Method: {row['wd_method'] or '-'}\n"
-        f"📱 Provider: {row['wd_provider'] or '-'}\n"
-        f"👤 Nama: {row['wd_name'] or '-'}\n"
-        f"📌 Nomor: {row['wd_number'] or '-'}\n\n"
-        f"📋 Min: Rp {MIN_WITHDRAW:,}\n"
-        f"📋 Max: Rp {MAX_WITHDRAW:,}"
+        "💸 <b>WITHDRAW DASHBOARD</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+
+        "💰 <b>ACCOUNT SUMMARY</b>\n"
+        f"• Balance       : <b>Rp {balance:,}</b>\n"
+        f"• Min Withdraw  : Rp {MIN_WITHDRAW:,}\n"
+        f"• Max Withdraw  : Rp {MAX_WITHDRAW:,}\n\n"
+
+        "📊 <b>WITHDRAW STATUS</b>\n"
+        f"• Status        : {'🟢 OPEN' if open_status else '🔴 CLOSED'}\n"
+        f"• Info          : {status_text}\n\n"
+
+        "🏦 <b>PAYMENT METHOD</b>\n"
+        f"• Method        : {row['wd_method'] or '-'}\n"
+        f"• Provider      : {row['wd_provider'] or '-'}\n"
+        f"• Name          : {row['wd_name'] or '-'}\n"
+        f"• Number        : {row['wd_number'] or '-'}\n\n"
+
+        "━━━━━━━━━━━━━━━━━━\n"
+        "⚡ Fast, Secure & Automated Withdrawal System"
     )
 
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🔄 REFRESH STARUS WD",
-                    callback_data="withdraw"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="💸 REQUEST WITHDRAW",
-                    callback_data="wd_request"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🔙 HOME",
-                    callback_data="home"
-                )
-            ]
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="💸 REQUEST WITHDRAW",
+                callback_data="wd_request"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🔄 REFRESH STATUS",
+                callback_data="withdraw"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🏦 UPDATE METHOD",
+                callback_data="wd_method"
+            ),
+            InlineKeyboardButton(
+                text="❓ HELP",
+                callback_data="wd_help"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🔙 BACK",
+                callback_data="home"
+            )
         ]
-    )
+    ])
 
     await call.message.edit_text(
         text,
@@ -896,8 +887,10 @@ async def wd_confirm(call: CallbackQuery):
     user_id = call.from_user.id
     state = user_states.setdefault(user_id, {})
 
+    # lock anti double click
     if state.get("lock"):
-        return await call.answer("⛔ sedang diproses", show_alert=True)
+        await call.answer("⛔ sedang diproses", show_alert=True)
+        return
 
     state["lock"] = True
 
@@ -907,20 +900,28 @@ async def wd_confirm(call: CallbackQuery):
 
                 row = await conn.fetchrow("""
                     SELECT balance, wd_method, wd_provider, wd_name, wd_number
-                    FROM users WHERE user_id=$1
+                    FROM users
+                    WHERE user_id=$1
                     FOR UPDATE
                 """, user_id)
 
+                # ❌ FIX: proper stop flow
                 if not row:
-                    return await call.answer("❌ user not found")
+                    await call.answer("❌ user not found", show_alert=True)
+                    return
 
+                # cek data bank
                 if not row["wd_name"] or not row["wd_number"]:
-                    return await call.answer("❌ data belum lengkap")
+                    await call.answer("❌ data belum lengkap", show_alert=True)
+                    return
 
                 balance = row["balance"] or 0
-                if balance < MIN_WITHDRAW:
-                    return await call.answer("❌ saldo kurang")
 
+                if balance < MIN_WITHDRAW:
+                    await call.answer("❌ saldo kurang", show_alert=True)
+                    return
+
+                # insert withdraw
                 await conn.execute("""
                     INSERT INTO withdraws(
                         user_id, amount, fee, net_amount,
@@ -935,19 +936,23 @@ async def wd_confirm(call: CallbackQuery):
                 row["wd_number"]
                 )
 
+                # update balance (AMAN: minus, bukan reset)
                 await conn.execute("""
                     UPDATE users
-                    SET balance=0,
-                        total_withdraw=COALESCE(total_withdraw,0)+$1
-                    WHERE user_id=$2
+                    SET balance = balance - $1,
+                        total_withdraw = COALESCE(total_withdraw,0) + $1
+                    WHERE user_id = $2
                 """, balance, user_id)
 
         await call.message.edit_text(
-            f"⏳ Withdraw pending\n💰 Rp {balance:,}\n"
+            f"⏳ Withdraw pending\n💰 Rp {balance:,}"
         )
+
+        await call.answer("✅ Withdraw berhasil diajukan", show_alert=True)
 
     except Exception as e:
         print("WD CONFIRM ERROR:", repr(e))
+        await call.answer("❌ sistem error", show_alert=True)
 
     finally:
         state.pop("lock", None)
