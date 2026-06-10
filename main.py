@@ -776,8 +776,8 @@ async def withdraw_page(call: CallbackQuery):
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="🔄 LIVE STATUS",
-                    callback_data="wd_live"
+                    text="🔄 REFRESH STARUS WD",
+                    callback_data="withdraw"
                 )
             ],
             [
