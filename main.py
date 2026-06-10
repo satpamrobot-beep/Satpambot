@@ -350,7 +350,10 @@ def verify_signature(data: dict, signature: str) -> bool:
 
     expected = hashlib.sha256(raw.encode()).hexdigest()
     return hmac.compare_digest(expected, signature or "")
-
+# =========================
+# FASTAPI APP
+# =========================
+app = FastAPI()
 
 # =========================
 # WEBHOOK BAYARGG
