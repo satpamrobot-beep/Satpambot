@@ -716,18 +716,36 @@ async def live_withdraw_panel(message, user_id):
     withdraw_live_flag[user_id] = True
 
     try:
-        for _ in range(120):
+        while withdraw_live_flag.get(user_id):
 
-            if not withdraw_live_flag.get(user_id):
-                break
+            open_status = withdraw_state["open"]
+            now = time.time()
 
-            open_status, _, status_text = wd_status()
-            now = now_wib().strftime("%H:%M:%S")
+            # =========================
+            # HITUNG SISA WAKTU
+            # =========================
+            if open_status and withdraw_state.get("close_at"):
+                remaining = int(withdraw_state["close_at"] - now)
+
+                if remaining <= 0:
+                    withdraw_state["open"] = False
+                    remaining_text = "EXPIRED 🔴"
+                else:
+                    h = remaining // 3600
+                    m = (remaining % 3600) // 60
+                    remaining_text = f"{h}h {m}m lagi"
+            else:
+                remaining_text = "CLOSED 🔴"
+
+            _, _, status_text = wd_status()
+            now_wib_time = now_wib().strftime("%H:%M:%S")
 
             panel = (
                 "💸 WITHDRAW CENTER\n\n"
-                f"🕒 WIB: {now}\n"
+                f"🕒 WIB: {now_wib_time}\n"
                 f"{status_text}\n\n"
+                f"🔓 Status: {'OPEN 🟢' if open_status else 'CLOSED 🔴'}\n"
+                f"⏳ Auto close: {remaining_text}\n"
                 "━━━━━━━━━━━━━━"
             )
 
@@ -747,8 +765,8 @@ async def live_withdraw_panel(message, user_id):
         print("LIVE PANEL ERROR:", repr(e))
 
     finally:
-        live_tasks.pop(user_id, None)
         withdraw_live_flag[user_id] = False
+        live_tasks.pop(user_id, None)
 
 
 @router.callback_query(F.data == "wd_live")
@@ -763,6 +781,30 @@ async def wd_live(call: CallbackQuery):
     live_tasks[user_id] = asyncio.create_task(
         live_withdraw_panel(call.message, user_id)
     )
+@router.callback_query(F.data == "wd_toggle")
+async def toggle_withdraw(call: CallbackQuery):
+
+    now = time.time()
+
+    if withdraw_state["open"]:
+        # kalau lagi OPEN → tutup
+        withdraw_state["open"] = False
+        withdraw_state["close_at"] = None
+        text = "WITHDRAW CLOSED 🔴"
+    else:
+        # kalau buka lagi → set 6 jam
+        withdraw_state["open"] = True
+        withdraw_state["close_at"] = now + 6 * 3600
+        text = "WITHDRAW OPEN 🟢 (6 JAM)"
+
+    await call.answer(text, show_alert=True)
+
+    try:
+        await call.message.edit_reply_markup(
+            reply_markup=withdraw_button(withdraw_state["open"])
+        )
+    except:
+        pass
 # =========================
 # CANCEL
 # =========================
