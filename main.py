@@ -10,7 +10,6 @@ from core.config import BOT_TOKEN
 from db.pool import init_db
 from bot.router import router
 
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(BASE_DIR)
 
@@ -23,11 +22,8 @@ async def main():
 
     dp = Dispatcher()
 
-    # INIT DB
     await init_db()
-    print("✅ DATABASE READY")
 
-    # REGISTER ROUTER (SEMUA HANDLER MASUK SINI)
     dp.include_router(router)
 
     print("🔥 BOT STARTED")
