@@ -10,6 +10,9 @@ CHANNEL_ID = -1003712587847
 GROUP_ID = -1003920865154
 
 
+# =========================
+# FORCE JOIN KB
+# =========================
 def force_join_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📢 Channel Update", url="https://t.me/+3g_yhHwxCrc5ZTg9")],
@@ -18,6 +21,9 @@ def force_join_kb():
     ])
 
 
+# =========================
+# DASHBOARD KB (NEW STYLE)
+# =========================
 def dashboard_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -26,7 +32,11 @@ def dashboard_kb():
         ],
         [
             InlineKeyboardButton(text="👤 Account", callback_data="account"),
-            InlineKeyboardButton(text="💳 Payment", callback_data="payment"),
+            InlineKeyboardButton(text="💳 Withdraw", callback_data="withdraw"),
+        ],
+        [
+            InlineKeyboardButton(text="⚙️ Setting", callback_data="setting"),
+            InlineKeyboardButton(text="📊 Statistik", callback_data="statistik"),
         ],
         [
             InlineKeyboardButton(text="❓ Help", callback_data="help"),
@@ -35,6 +45,9 @@ def dashboard_kb():
     ])
 
 
+# =========================
+# JOIN CHECK
+# =========================
 async def is_joined(bot, user_id: int) -> bool:
     try:
         ch = await bot.get_chat_member(CHANNEL_ID, user_id)
@@ -46,6 +59,26 @@ async def is_joined(bot, user_id: int) -> bool:
         return False
 
 
+# =========================
+# FORMAT DASHBOARD
+# =========================
+def format_dashboard(user, idr, usd):
+    return (
+        "🐧 <b>Bluebird Cede Earn</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"👤 Id Account : <code>{user.id}</code>\n"
+        f"📛 Username   : @{user.username if user.username else '-'}\n"
+        f"🧾 Name       : {user.full_name}\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"💰 Saldo      : Rp {idr:,} / ${usd}\n"
+        f"🔗 Referral   : <code>{user.id}</code>\n"
+        "━━━━━━━━━━━━━━━━━━"
+    )
+
+
+# =========================
+# START COMMAND
+# =========================
 @router.message(CommandStart())
 async def start_cmd(message: Message):
     bot = message.bot
@@ -55,40 +88,42 @@ async def start_cmd(message: Message):
 
     if not await is_joined(bot, user.id):
         await message.answer(
-            "⚠️ Join dulu bro biar bisa lanjut.",
+            "⚠️ Join dulu biar bisa lanjut sistem.",
             reply_markup=force_join_kb()
         )
         return
 
     idr, usd = await get_balance(user.id)
 
-    text = (
-        f"👋 Hay {user.full_name}\n"
-        f"🆔 ID: <code>{user.id}</code>\n"
-        f"💰 Saldo: Rp {idr:,} / ${usd}\n"
+    await message.answer(
+        format_dashboard(user, idr, usd),
+        reply_markup=dashboard_kb()
     )
 
-    await message.answer(text, reply_markup=dashboard_kb())
 
-
+# =========================
+# CALLBACK JOIN CHECK
+# =========================
 @router.callback_query(F.data == "check_join")
 async def check_join(call: CallbackQuery):
     bot = call.bot
     user = call.from_user
 
+    await ensure_user(user.id, user.username, user.full_name)
+
     if await is_joined(bot, user.id):
 
-        await call.message.delete()
+        try:
+            await call.message.delete()
+        except:
+            pass
 
         idr, usd = await get_balance(user.id)
 
-        text = (
-            f"👋 Hay {user.full_name}\n"
-            f"🆔 ID: <code>{user.id}</code>\n"
-            f"💰 Saldo: Rp {idr:,} / ${usd}\n"
+        await call.message.answer(
+            format_dashboard(user, idr, usd),
+            reply_markup=dashboard_kb()
         )
 
-        await call.message.answer(text, reply_markup=dashboard_kb())
-
     else:
-        await call.answer("❌ Belum join semua", show_alert=True)
+        await call.answer("❌ Kamu belum join semua channel/group", show_alert=True)
