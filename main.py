@@ -1375,18 +1375,24 @@ async def save(call: CallbackQuery):
 @router.message(Command("dbcheck"))
 async def dbcheck(message: Message):
 
-    async with db_pool.acquire() as conn:
+    try:
 
-        rows = await conn.fetch("""
-            SELECT table_name
-            FROM information_schema.tables
-            WHERE table_schema='public'
-            ORDER BY table_name
-        """)
+        async with db_pool.acquire() as conn:
 
-    await message.answer(
-        "\n".join(r["table_name"] for r in rows)
-    )
+            rows = await conn.fetch("""
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema='public'
+            """)
+
+        await message.answer(
+            "\n".join(r["table_name"] for r in rows)
+        )
+
+    except Exception as e:
+        await message.answer(
+            f"ERROR:\n{repr(e)}"
+        )
 
 # =========================
 # NORMALIZER
