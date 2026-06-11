@@ -2,6 +2,7 @@ import asyncio
 import string
 import random
 import time
+import json
 
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -12,14 +13,8 @@ from db.pool import get_pool
 
 router = Router()
 
-# =========================
-# SESSION CLEAN
-# =========================
 SESSION = {}
 
-# =========================
-# STATE
-# =========================
 class UploadState(StatesGroup):
     collecting = State()
     choose_type = State()
@@ -27,9 +22,6 @@ class UploadState(StatesGroup):
     share = State()
     review = State()
 
-# =========================
-# UTIL
-# =========================
 def rand(n=14):
     return ''.join(random.choices(string.ascii_letters + string.digits, k=n))
 
@@ -40,9 +32,6 @@ def build_media_tag(p=0, v=0, d=0):
     if d: parts.append(f"{d}d")
     return "_".join(parts)
 
-# =========================
-# KEYBOARD (STICK UI)
-# =========================
 UPLOAD_KB = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="✅ DONE", callback_data="up_done")],
     [InlineKeyboardButton(text="❌ CANCEL", callback_data="up_cancel")]
@@ -71,7 +60,7 @@ def kb_save():
     ])
 
 # =========================
-# START UPLOAD
+# START
 # =========================
 @router.callback_query(F.data == "upfile")
 async def upfile(call: CallbackQuery, state: FSMContext):
@@ -79,7 +68,7 @@ async def upfile(call: CallbackQuery, state: FSMContext):
     uid = call.from_user.id
 
     if SESSION.get(uid, {}).get("active"):
-        return await call.answer("⛔ Upload masih berjalan", show_alert=True)
+        return await call.answer("⛔ masih upload", show_alert=True)
 
     SESSION[uid] = {
         "active": True,
@@ -94,23 +83,20 @@ async def upfile(call: CallbackQuery, state: FSMContext):
     await state.set_state(UploadState.collecting)
 
     await call.message.edit_text(
-        "📁 <b>Google Drive Upload</b>\n\n"
-        "📎 Kirim file (foto / video / dokumen)\n"
-        "⚡ Klik DONE kalau selesai",
+        "📁 <b>UPLOAD MODE</b>\n\nKirim file kamu",
         reply_markup=UPLOAD_KB
     )
 
     await call.answer()
 
 # =========================
-# RECEIVE MEDIA
+# RECEIVE
 # =========================
 @router.message(UploadState.collecting, F.content_type.in_({"photo", "video", "document"}))
 async def receive(message: Message, state: FSMContext):
 
     uid = message.from_user.id
     sess = SESSION.get(uid)
-
     if not sess or sess.get("done"):
         return
 
@@ -122,35 +108,24 @@ async def receive(message: Message, state: FSMContext):
         sess["media"].append(("doc", message.document.file_id))
 
     total = len(sess["media"])
-    now = time.time()
 
     if not sess["msg"]:
         sess["msg"] = await message.answer(
-            f"📦 Uploading...\nFiles: {total}",
+            f"📦 Uploading: {total}",
             reply_markup=UPLOAD_KB
         )
-        sess["count"] = total
-        sess["last"] = now
-        return
-
-    if total == sess["count"]:
-        return
-
-    if now - sess["last"] < 0.8:
         return
 
     try:
         await sess["msg"].edit_text(
-            f"📦 Uploading...\nFiles: {total}",
+            f"📦 Uploading: {total}",
             reply_markup=UPLOAD_KB
         )
-        sess["count"] = total
-        sess["last"] = now
     except:
         pass
 
 # =========================
-# DONE (CLEAR RAM + NEXT STEP)
+# DONE (CLEAR RAM)
 # =========================
 @router.callback_query(F.data == "up_done")
 async def done(call: CallbackQuery, state: FSMContext):
@@ -159,13 +134,7 @@ async def done(call: CallbackQuery, state: FSMContext):
     sess = SESSION.get(uid)
 
     if not sess or not sess["media"]:
-        return await call.answer("❌ Tidak ada file", show_alert=True)
-
-    if sess["lock"]:
-        return await call.answer("⏳ Processing...", show_alert=True)
-
-    sess["lock"] = True
-    sess["done"] = True
+        return await call.answer("❌ kosong", show_alert=True)
 
     media = sess["media"]
 
@@ -173,35 +142,17 @@ async def done(call: CallbackQuery, state: FSMContext):
     v = sum(1 for x in media if x[0] == "video")
     d = sum(1 for x in media if x[0] == "doc")
 
-    # AUTO CLEAR RAM
     sess["media"].clear()
 
     await state.update_data(media=media, photo=p, video=v, doc=d)
     await state.set_state(UploadState.choose_type)
 
     await call.message.edit_text(
-        "☁️ <b>Upload Complete</b>\n\n"
-        f"📦 Total: {len(media)}\n"
-        f"🖼 {p} | 🎥 {v} | 📄 {d}\n\n"
-        "Pilih tipe:",
+        f"☁️ UPLOAD DONE\n\nTotal: {len(media)}",
         reply_markup=kb_type()
     )
 
     await call.answer()
-
-# =========================
-# CANCEL
-# =========================
-@router.callback_query(F.data == "up_cancel")
-async def cancel(call: CallbackQuery, state: FSMContext):
-
-    uid = call.from_user.id
-
-    SESSION.pop(uid, None)
-    await state.clear()
-
-    await call.answer("❌ Cancelled", show_alert=True)
-    await call.message.edit_text("🏠 Dashboard")
 
 # =========================
 # TYPE
@@ -214,11 +165,11 @@ async def type_handler(call: CallbackQuery, state: FSMContext):
 
     if is_paid:
         await state.set_state(UploadState.price)
-        await call.message.edit_text("💰 Masukkan harga (1000 - 50000)")
+        await call.message.edit_text("💰 Masukkan harga")
     else:
         await state.update_data(price=0)
         await state.set_state(UploadState.share)
-        await call.message.edit_text("🔗 Visibility", reply_markup=kb_visibility())
+        await call.message.edit_text("Visibility", reply_markup=kb_visibility())
 
     await call.answer()
 
@@ -229,17 +180,12 @@ async def type_handler(call: CallbackQuery, state: FSMContext):
 async def price_handler(message: Message, state: FSMContext):
 
     if not message.text or not message.text.isdigit():
-        return await message.answer("❌ angka saja")
+        return await message.answer("❌ angka")
 
-    price = int(message.text)
-
-    if price < 1000 or price > 50000:
-        return await message.answer("❌ 1000 - 50000")
-
-    await state.update_data(price=price)
+    await state.update_data(price=int(message.text))
     await state.set_state(UploadState.share)
 
-    await message.answer("🔗 Visibility", reply_markup=kb_visibility())
+    await message.answer("Visibility", reply_markup=kb_visibility())
 
 # =========================
 # SHARE
@@ -253,24 +199,23 @@ async def share_handler(call: CallbackQuery, state: FSMContext):
     await state.set_state(UploadState.review)
 
     await call.message.edit_text(
-        "📋 <b>Review</b>\n\n"
-        f"Files: {len(data.get('media', []))}\n"
-        f"Type : {'PAID' if data.get('is_paid') else 'FREE'}\n"
-        f"Price: {data.get('price', 0)}\n"
-        f"Share: {call.data.replace('share_', '').upper()}\n",
+        f"REVIEW\nFiles: {len(data.get('media', []))}",
         reply_markup=kb_save()
     )
 
     await call.answer()
 
 # =========================
-# SAVE
+# SAVE (FIX + CREATE BY)
 # =========================
 @router.callback_query(F.data == "save_upload")
 async def save(call: CallbackQuery, state: FSMContext):
 
     data = await state.get_data()
     media = data.get("media", [])
+
+    user = call.from_user
+    username = user.username or user.full_name or "unknown"
 
     code = f"earnfilebot_{rand(14)}_{build_media_tag(data.get('photo',0), data.get('video',0), data.get('doc',0))}"
 
@@ -285,9 +230,9 @@ async def save(call: CallbackQuery, state: FSMContext):
             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
         """,
         code,
-        call.from_user.id,
-        call.from_user.username,
-        media,
+        user.id,
+        username,
+        json.dumps(media),   # 🔥 FIX ERROR LIST
         data.get("photo",0),
         data.get("video",0),
         data.get("doc",0),
@@ -296,7 +241,7 @@ async def save(call: CallbackQuery, state: FSMContext):
         data.get("share", False)
         )
 
-    SESSION.pop(call.from_user.id, None)
+    SESSION.pop(user.id, None)
     await state.clear()
 
     await call.message.edit_text(
@@ -304,7 +249,7 @@ async def save(call: CallbackQuery, state: FSMContext):
 
 🔑 CODE: <code>{code}</code>
 📦 FILE: {len(media)}
-💰 TYPE: {'PAID' if data.get('is_paid') else 'FREE'}"""
+👤 CREATE BY: @{username}"""
     )
 
     await call.answer()
