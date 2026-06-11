@@ -13,6 +13,6 @@ from handlers.callbacks import router as cb_router
 # INCLUDE ROUTERS
 # =========================
 router.include_router(start_router)
-dp.include_router(upfile_router)
+router.include_router(upfile_router)
 router.include_router(about_router)
 router.include_router(cb_router)
