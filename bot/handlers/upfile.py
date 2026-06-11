@@ -13,7 +13,7 @@ from db.pool import get_pool
 router = Router()
 
 # =========================
-# SESSION CLEAN (NO NUMPUK)
+# SESSION CLEAN
 # =========================
 SESSION = {}
 
@@ -27,22 +27,11 @@ class UploadState(StatesGroup):
     share = State()
     review = State()
 
-
-# =========================
-# UI BUTTON (ALWAYS STICK)
-# =========================
-UPLOAD_KB = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="✅ DONE", callback_data="up_done")],
-    [InlineKeyboardButton(text="❌ CANCEL", callback_data="up_cancel")]
-])
-
-
 # =========================
 # UTIL
 # =========================
 def rand(n=14):
     return ''.join(random.choices(string.ascii_letters + string.digits, k=n))
-
 
 def build_media_tag(p=0, v=0, d=0):
     parts = []
@@ -51,9 +40,38 @@ def build_media_tag(p=0, v=0, d=0):
     if d: parts.append(f"{d}d")
     return "_".join(parts)
 
+# =========================
+# KEYBOARD (STICK UI)
+# =========================
+UPLOAD_KB = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="✅ DONE", callback_data="up_done")],
+    [InlineKeyboardButton(text="❌ CANCEL", callback_data="up_cancel")]
+])
+
+def kb_type():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🆓 FREE", callback_data="type_free"),
+            InlineKeyboardButton(text="💰 PAID", callback_data="type_paid")
+        ],
+        [InlineKeyboardButton(text="❌ CANCEL", callback_data="up_cancel")]
+    ])
+
+def kb_visibility():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🌍 PUBLIC", callback_data="share_yes"),
+            InlineKeyboardButton(text="🔒 PRIVATE", callback_data="share_no")
+        ]
+    ])
+
+def kb_save():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💾 SAVE TO CLOUD", callback_data="save_upload")]
+    ])
 
 # =========================
-# START UPLOAD (DRIVE UI)
+# START UPLOAD
 # =========================
 @router.callback_query(F.data == "upfile")
 async def upfile(call: CallbackQuery, state: FSMContext):
@@ -78,16 +96,14 @@ async def upfile(call: CallbackQuery, state: FSMContext):
     await call.message.edit_text(
         "📁 <b>Google Drive Upload</b>\n\n"
         "📎 Kirim file (foto / video / dokumen)\n"
-        "⚡ Semua file akan tersimpan sementara\n\n"
-        "Tekan DONE jika selesai upload",
+        "⚡ Klik DONE kalau selesai",
         reply_markup=UPLOAD_KB
     )
 
     await call.answer()
 
-
 # =========================
-# RECEIVE MEDIA (DRIVE STYLE CLEAN)
+# RECEIVE MEDIA
 # =========================
 @router.message(UploadState.collecting, F.content_type.in_({"photo", "video", "document"}))
 async def receive(message: Message, state: FSMContext):
@@ -108,19 +124,15 @@ async def receive(message: Message, state: FSMContext):
     total = len(sess["media"])
     now = time.time()
 
-    # FIRST UI MESSAGE (LIKE DRIVE)
     if not sess["msg"]:
         sess["msg"] = await message.answer(
-            f"📦 <b>Uploading...</b>\n"
-            f"Files: {total}\n\n"
-            "Status: syncing to cloud...",
+            f"📦 Uploading...\nFiles: {total}",
             reply_markup=UPLOAD_KB
         )
         sess["count"] = total
         sess["last"] = now
         return
 
-    # NO SPAM UPDATE
     if total == sess["count"]:
         return
 
@@ -129,9 +141,7 @@ async def receive(message: Message, state: FSMContext):
 
     try:
         await sess["msg"].edit_text(
-            f"📦 <b>Uploading to Drive...</b>\n"
-            f"Files: {total}\n\n"
-            "Status: syncing...",
+            f"📦 Uploading...\nFiles: {total}",
             reply_markup=UPLOAD_KB
         )
         sess["count"] = total
@@ -139,9 +149,8 @@ async def receive(message: Message, state: FSMContext):
     except:
         pass
 
-
 # =========================
-# DONE (AUTO CLEAN MEMORY + UI STEP)
+# DONE (CLEAR RAM + NEXT STEP)
 # =========================
 @router.callback_query(F.data == "up_done")
 async def done(call: CallbackQuery, state: FSMContext):
@@ -164,33 +173,24 @@ async def done(call: CallbackQuery, state: FSMContext):
     v = sum(1 for x in media if x[0] == "video")
     d = sum(1 for x in media if x[0] == "doc")
 
-    # AUTO CLEAR MEDIA RAM (IMPORTANT)
-    sess["media"] = []
+    # AUTO CLEAR RAM
+    sess["media"].clear()
 
     await state.update_data(media=media, photo=p, video=v, doc=d)
     await state.set_state(UploadState.choose_type)
 
     await call.message.edit_text(
-        "☁️ <b>Google Drive Upload Complete</b>\n\n"
-        f"📦 Total Files: <b>{len(media)}</b>\n"
-        f"🖼 Photos: {p}\n"
-        f"🎥 Videos: {v}\n"
-        f"📄 Docs: {d}\n\n"
-        "Pilih tipe penyimpanan:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🆓 FREE", callback_data="type_free"),
-                InlineKeyboardButton(text="💰 PAID", callback_data="type_paid")
-            ],
-            [InlineKeyboardButton(text="❌ CANCEL", callback_data="up_cancel")]
-        ])
+        "☁️ <b>Upload Complete</b>\n\n"
+        f"📦 Total: {len(media)}\n"
+        f"🖼 {p} | 🎥 {v} | 📄 {d}\n\n"
+        "Pilih tipe:",
+        reply_markup=kb_type()
     )
 
     await call.answer()
 
-
 # =========================
-# CANCEL (FULL RESET CLEAN)
+# CANCEL
 # =========================
 @router.callback_query(F.data == "up_cancel")
 async def cancel(call: CallbackQuery, state: FSMContext):
@@ -201,12 +201,10 @@ async def cancel(call: CallbackQuery, state: FSMContext):
     await state.clear()
 
     await call.answer("❌ Cancelled", show_alert=True)
-
-    await call.message.edit_text("🏠 Kembali ke Dashboard")
-
+    await call.message.edit_text("🏠 Dashboard")
 
 # =========================
-# TYPE + PRICE + SHARE + SAVE (tetap simple tapi clean)
+# TYPE
 # =========================
 @router.callback_query(F.data.in_({"type_free", "type_paid"}))
 async def type_handler(call: CallbackQuery, state: FSMContext):
@@ -220,19 +218,13 @@ async def type_handler(call: CallbackQuery, state: FSMContext):
     else:
         await state.update_data(price=0)
         await state.set_state(UploadState.share)
-
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🌍 PUBLIC", callback_data="share_yes"),
-                InlineKeyboardButton(text="🔒 PRIVATE", callback_data="share_no")
-            ]
-        ])
-
-        await call.message.edit_text("🔗 Visibility", reply_markup=kb)
+        await call.message.edit_text("🔗 Visibility", reply_markup=kb_visibility())
 
     await call.answer()
 
-
+# =========================
+# PRICE
+# =========================
 @router.message(UploadState.price)
 async def price_handler(message: Message, state: FSMContext):
 
@@ -247,15 +239,11 @@ async def price_handler(message: Message, state: FSMContext):
     await state.update_data(price=price)
     await state.set_state(UploadState.share)
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🌍 PUBLIC", callback_data="share_yes"),
-            InlineKeyboardButton(text="🔒 PRIVATE", callback_data="share_no")
-        ]
-    ])
+    await message.answer("🔗 Visibility", reply_markup=kb_visibility())
 
-    await message.answer("🔗 Visibility", reply_markup=kb)
-
+# =========================
+# SHARE
+# =========================
 @router.callback_query(F.data.in_({"share_yes", "share_no"}))
 async def share_handler(call: CallbackQuery, state: FSMContext):
 
@@ -265,15 +253,58 @@ async def share_handler(call: CallbackQuery, state: FSMContext):
     await state.set_state(UploadState.review)
 
     await call.message.edit_text(
-        "📋 <b>Final Review</b>\n\n"
+        "📋 <b>Review</b>\n\n"
         f"Files: {len(data.get('media', []))}\n"
         f"Type : {'PAID' if data.get('is_paid') else 'FREE'}\n"
         f"Price: {data.get('price', 0)}\n"
-        f"Share: {call.data.replace('share_', '').upper()}\n\n"
-        "Klik SAVE untuk lanjut",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💾 SAVE TO CLOUD", callback_data="save_upload")]
-        ])
+        f"Share: {call.data.replace('share_', '').upper()}\n",
+        reply_markup=kb_save()
+    )
+
+    await call.answer()
+
+# =========================
+# SAVE
+# =========================
+@router.callback_query(F.data == "save_upload")
+async def save(call: CallbackQuery, state: FSMContext):
+
+    data = await state.get_data()
+    media = data.get("media", [])
+
+    code = f"earnfilebot_{rand(14)}_{build_media_tag(data.get('photo',0), data.get('video',0), data.get('doc',0))}"
+
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO uploads (
+                code, user_id, username,
+                media, photo_count, video_count, doc_count,
+                is_paid, price, is_share, created_at
+            )
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
+        """,
+        code,
+        call.from_user.id,
+        call.from_user.username,
+        media,
+        data.get("photo",0),
+        data.get("video",0),
+        data.get("doc",0),
+        data.get("is_paid", False),
+        data.get("price", 0),
+        data.get("share", False)
+        )
+
+    SESSION.pop(call.from_user.id, None)
+    await state.clear()
+
+    await call.message.edit_text(
+        f"""🎉 SUCCESS SAVE
+
+🔑 CODE: <code>{code}</code>
+📦 FILE: {len(media)}
+💰 TYPE: {'PAID' if data.get('is_paid') else 'FREE'}"""
     )
 
     await call.answer()
