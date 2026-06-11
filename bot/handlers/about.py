@@ -49,25 +49,48 @@ def about_kb(active="home"):
 
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(mark("home", "📌 Ringkasan"), callback_data="about_home"),
-            InlineKeyboardButton(mark("system", "⚙️ Sistem"), callback_data="about_system"),
+            InlineKeyboardButton(
+                text=mark("home", "📌 Ringkasan"),
+                callback_data="about_home"
+            ),
+            InlineKeyboardButton(
+                text=mark("system", "⚙️ Sistem"),
+                callback_data="about_system"
+            ),
         ],
         [
-            InlineKeyboardButton(mark("features", "🚀 Fitur"), callback_data="about_features"),
-            InlineKeyboardButton(mark("stats", "📊 Statistik"), callback_data="about_stats"),
+            InlineKeyboardButton(
+                text=mark("features", "🚀 Fitur"),
+                callback_data="about_features"
+            ),
+            InlineKeyboardButton(
+                text=mark("stats", "📊 Statistik"),
+                callback_data="about_stats"
+            ),
         ],
         [
-            InlineKeyboardButton(mark("earn", "💰 Cara Cuan"), callback_data="about_earn"),
-            InlineKeyboardButton(mark("vip", "👑 VIP"), callback_data="about_vip"),
+            InlineKeyboardButton(
+                text=mark("earn", "💰 Cara Cuan"),
+                callback_data="about_earn"
+            ),
+            InlineKeyboardButton(
+                text=mark("vip", "👑 VIP"),
+                callback_data="about_vip"
+            ),
         ],
         [
-            InlineKeyboardButton("🌍 Ganti Bahasa", callback_data="about_lang"),
+            InlineKeyboardButton(
+                text="🌍 Ganti Bahasa",
+                callback_data="about_lang"
+            ),
         ],
         [
-            InlineKeyboardButton("🔙 Kembali", callback_data="back_home"),
+            InlineKeyboardButton(
+                text="🔙 Kembali",
+                callback_data="back_home"
+            ),
         ]
     ])
-
 
 # =========================
 # CONTENT ENGINE
