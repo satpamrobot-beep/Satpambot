@@ -10,22 +10,17 @@ from handlers.start import dashboard_text, dashboard_kb
 router = Router()
 
 YEAR = datetime.now().year
-
-# =========================
-# LANGUAGE CACHE
-# =========================
-user_lang = {}  # user_id -> "id" / "en"
+COPYRIGHT = f"© {YEAR} EarnFileBot • Monetization System to Telegram"
 
 
 # =========================
-# DATABASE STATS
+# STATS
 # =========================
 async def total_users():
     try:
         pool = get_pool()
         async with pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT COUNT(*) FROM users")
-            return row[0] or 0
+            return await conn.fetchval("SELECT COUNT(*) FROM users") or 0
     except:
         return 0
 
@@ -34,8 +29,7 @@ async def total_uploads():
     try:
         pool = get_pool()
         async with pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT COUNT(*) FROM uploads")
-            return row[0] or 0
+            return await conn.fetchval("SELECT COUNT(*) FROM uploads") or 0
     except:
         return 0
 
@@ -49,203 +43,159 @@ def about_kb(active="home"):
 
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(
-                text=mark("home", "📌 Ringkasan"),
-                callback_data="about_home"
-            ),
-            InlineKeyboardButton(
-                text=mark("system", "⚙️ Sistem"),
-                callback_data="about_system"
-            ),
+            InlineKeyboardButton(mark("home", "📌 Ringkasan"), callback_data="about_home"),
+            InlineKeyboardButton(mark("system", "⚙️ Sistem"), callback_data="about_system"),
         ],
         [
-            InlineKeyboardButton(
-                text=mark("features", "🚀 Fitur"),
-                callback_data="about_features"
-            ),
-            InlineKeyboardButton(
-                text=mark("stats", "📊 Statistik"),
-                callback_data="about_stats"
-            ),
+            InlineKeyboardButton(mark("features", "🚀 Fitur"), callback_data="about_features"),
+            InlineKeyboardButton(mark("stats", "📊 Statistik"), callback_data="about_stats"),
         ],
         [
-            InlineKeyboardButton(
-                text=mark("earn", "💰 Cara Cuan"),
-                callback_data="about_earn"
-            ),
-            InlineKeyboardButton(
-                text=mark("vip", "👑 VIP"),
-                callback_data="about_vip"
-            ),
+            InlineKeyboardButton(mark("earn", "💰 Monetisasi"), callback_data="about_earn"),
+            InlineKeyboardButton(mark("vip", "👑 VIP"), callback_data="about_vip"),
         ],
         [
-            InlineKeyboardButton(
-                text="🌍 Ganti Bahasa",
-                callback_data="about_lang"
-            ),
-        ],
-        [
-            InlineKeyboardButton(
-                text="🔙 Kembali",
-                callback_data="back_home"
-            ),
+            InlineKeyboardButton("🔙 Kembali", callback_data="back_home"),
         ]
     ])
+
 
 # =========================
 # CONTENT ENGINE
 # =========================
-def content(tab, user, balance, users, uploads, lang="id"):
+def content(tab, user, balance, users, uploads):
 
     username = f"@{user.username}" if user.username else "-"
+    footer = f"\n\n<i>{COPYRIGHT}</i>"
 
-    # ================= INDONESIA =================
-    if lang == "id":
+    # ================= HOME =================
+    if tab == "home":
+        return (
+            "╔══════════════════════════╗\n"
+            " 🤖 <b>EARN FILE BOT</b>\n"
+            "╚══════════════════════════╝\n\n"
 
-        if tab == "home":
-            return (
-                "╔══════════════════════╗\n"
-                " 🤖 EARN FILE BOT\n"
-                "╚══════════════════════╝\n\n"
+            "📌 <b>Ringkasan Sistem</b>\n"
+            "EarnFileBot adalah platform monetisasi file digital berbasis Telegram.\n"
+            "User dapat upload file, membuat kode unik, dan membagikan link untuk menghasilkan uang.\n\n"
 
-                "📌 <b>Ringkasan Sistem</b>\n"
-                "Bot ini adalah platform upload & monetisasi file otomatis di Telegram.\n\n"
+            f"👤 User  : {username}\n"
+            f"🆔 ID    : <code>{user.id}</code>\n"
+            f"💰 Saldo : Rp {balance:,.0f}\n\n"
 
-                f"👤 User : {username}\n"
-                f"🆔 ID   : <code>{user.id}</code>\n"
-                f"💰 Saldo: Rp {balance:,.0f}\n\n"
+            "⚡ Sistem marketplace file digital + monetisasi otomatis"
+            + footer
+        )
 
-                "⚡ Sistem berbasis aktivitas pengguna"
-            )
+    # ================= SYSTEM =================
+    if tab == "system":
+        return (
+            "⚙️ <b>Sistem Platform</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
 
-        if tab == "system":
-            return (
-                "⚙️ <b>Sistem</b>\n"
-                "━━━━━━━━━━━━━━\n"
-                "• Python AsyncIO\n"
-                "• Aiogram 3.x\n"
-                "• PostgreSQL Pooler\n"
-                "• Sistem cepat & scalable"
-            )
+            "• Python AsyncIO Engine\n"
+            "• Aiogram Telegram Bot API\n"
+            "• PostgreSQL Pooler Database\n"
+            "• High Performance Architecture\n"
+            "• Scalable & Cloud Ready\n\n"
 
-        if tab == "features":
-            return (
-                "🚀 <b>Fitur</b>\n"
-                "━━━━━━━━━━━━━━\n"
-                "• Upload file otomatis\n"
-                "• Kode file unik\n"
-                "• Share link publik\n"
-                "• Sistem balance user"
-            )
+            "📡 Sistem mampu menangani ribuan user secara bersamaan tanpa delay"
+            + footer
+        )
 
-        if tab == "stats":
-            return (
-                "📊 <b>Statistik Live</b>\n"
-                "━━━━━━━━━━━━━━\n"
-                f"👥 Users  : {users}\n"
-                f"📦 Upload : {uploads}"
-            )
+    # ================= FEATURES =================
+    if tab == "features":
+        return (
+            "🚀 <b>Fitur Utama</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
 
-        if tab == "earn":
-            return (
-                "💰 <b>Monetisasi System</b>\n"
-                "━━━━━━━━━━━━━━\n\n"
+            "📤 Upload File\n"
+            "• Foto, video, dokumen\n"
+            "• Generate kode unik otomatis\n\n"
 
-                "📦 Upload file ke bot\n"
-                "💵 Tentukan harga (Free / Paid)\n"
-                "🔗 Dapatkan link share unik\n"
-                "📢 Share ke sosial media\n\n"
+            "🔗 Share System\n"
+            "• Link file bisa dibagikan ke sosial media\n"
+            "• Tracking akses file\n\n"
 
-                "📈 Aktivitas dapat meningkatkan potensi balance\n"
-                "⚠️ Withdraw mengikuti aturan sistem"
-            )
+            "💳 Monetisasi System\n"
+            "• Upload GRATIS atau BERBAYAR\n"
+            "• File berbayar menghasilkan saldo saat dibeli user lain\n\n"
 
-        if tab == "vip":
-            return (
-                "👑 <b>VIP</b>\n"
-                "━━━━━━━━━━━━━━\n"
-                "• Upload lebih cepat\n"
-                "• Prioritas server\n"
-                "• Fitur tambahan\n\n"
-                "Status: Free User"
-            )
+            "📦 File Management\n"
+            "• Akses file kapan saja\n"
+            "• Data tersimpan aman di database"
+            + footer
+        )
 
-        copyright_text = f"© {YEAR} EarnFileBot • Monetization System to Telegram"
+    # ================= STATS =================
+    if tab == "stats":
+        return (
+            "📊 <b>Statistik Live</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
 
-    # ================= ENGLISH =================
-    else:
+            f"👥 Total User   : {users}\n"
+            f"📦 Total Upload : {uploads}\n\n"
 
-        if tab == "home":
-            return (
-                "╔══════════════════════╗\n"
-                " 🤖 EARN FILE BOT\n"
-                "╚══════════════════════╝\n\n"
+            "⚡ Data update real-time dari database\n"
+            "📈 Sistem terus berkembang setiap hari"
+            + footer
+        )
 
-                "📌 <b>Overview</b>\n"
-                "This bot is an automated file upload and monetization system on Telegram.\n\n"
+    # ================= EARN =================
+    if tab == "earn":
+        return (
+            "💰 <b>Monetisasi & Penghasilan</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
 
-                f"👤 User : {username}\n"
-                f"🆔 ID   : <code>{user.id}</code>\n"
-                f"💰 Balance : Rp {balance:,.0f}\n\n"
+            "📦 <b>Cara Kerja:</b>\n"
+            "1. Upload file ke bot\n"
+            "2. Set harga (Free / Paid)\n"
+            "3. Bot membuat kode unik file\n"
+            "4. Share link ke sosial media\n\n"
 
-                "⚡ Activity-based reward system"
-            )
+            "💳 <b>Sistem Penghasilan:</b>\n"
+            "• File GRATIS → tidak menghasilkan\n"
+            "• File BERBAYAR → setiap pembelian masuk saldo otomatis\n"
+            "• Semakin banyak pembeli = semakin besar penghasilan\n\n"
 
-        if tab == "system":
-            return (
-                "⚙️ <b>System Architecture</b>\n"
-                "━━━━━━━━━━━━━━\n"
-                "• Python AsyncIO\n"
-                "• Aiogram 3.x\n"
-                "• PostgreSQL Pooler\n"
-                "• High performance scalable system"
-            )
+            "📢 <b>Strategi Cuan:</b>\n"
+            "• Share ke Telegram group\n"
+            "• WhatsApp / TikTok / Instagram\n"
+            "• Gunakan file yang viral / dibutuhkan orang\n\n"
 
-        if tab == "features":
-            return (
-                "🚀 <b>Features</b>\n"
-                "━━━━━━━━━━━━━━\n"
-                "• Automated file upload\n"
-                "• Unique file code generator\n"
-                "• Shareable public links\n"
-                "• User balance system"
-            )
+            "🔥 <b>Tips Pro:</b>\n"
+            "• Jangan cuma upload, tapi juga promosi\n"
+            "• Konsisten upload file berkualitas\n"
+            "• Gunakan judul menarik biar banyak klik"
+            + footer
+        )
 
-        if tab == "stats":
-            return (
-                "📊 <b>Live Statistics</b>\n"
-                "━━━━━━━━━━━━━━\n"
-                f"👥 Total Users  : {users}\n"
-                f"📦 Total Uploads: {uploads}"
-            )
+    # ================= VIP (UPDATED VVIP) =================
+    if tab == "vip":
+        return (
+            "👑 <b>VIP / VVIP ACCESS</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
 
-        if tab == "earn":
-            return (
-                "💰 <b>Monetization System</b>\n"
-                "━━━━━━━━━━━━━━\n\n"
+            "🚀 <b>Keuntungan VIP:</b>\n"
+            "• update media setiap hari\n"
+            "• Prioritas update tanpa batas\n"
+            "• Fitur premium unlock\n"
+            "• Support prioritas admin\n\n"
 
-                "📦 Upload your files\n"
-                "💵 Set price (Free / Paid)\n"
-                "🔗 Generate shareable link\n"
-                "📢 Promote on social media\n\n"
+            "🔥 <b>VVIP ACCESS (RECOMMENDED)</b>\n"
+            "• Join Channel VVIP EARNFILE\n"
+            "• Dapat akses semua code tanpa batas\n"
+            "• Update code baru setiap hari\n"
+            "• Akses file premium eksklusif\n\n"
 
-                "📈 Higher activity may increase balance growth\n"
-                "⚠️ Withdrawals depend on system rules"
-            )
+            "📢 <b>Info Penting:</b>\n"
+            "Semakin aktif di VVIP, semakin besar peluang mendapatkan media gratis file tanpa berbayar.\n\n"
 
-        if tab == "vip":
-            return (
-                "👑 <b>VIP System</b>\n"
-                "━━━━━━━━━━━━━━\n"
-                "• Faster uploads\n"
-                "• Priority processing\n"
-                "• Extra features\n\n"
-                "Status: Free User"
-            )
+            "💡 Upgrade ke VVIP untuk mendapakan media full update"
+            + footer
+        )
 
-        copyright_text = f"© {YEAR} EarnFileBot • Monetization System to Telegram"
-
-    return copyright_text
+    return footer
 
 
 # =========================
@@ -254,14 +204,13 @@ def content(tab, user, balance, users, uploads, lang="id"):
 @router.callback_query(F.data == "about")
 async def about(call: CallbackQuery):
     user = call.from_user
-    lang = user_lang.get(user.id, "id")
 
     balance = await get_user_balance(user.id)
     users = await total_users()
     uploads = await total_uploads()
 
     await call.message.edit_text(
-        content("home", user, balance, users, uploads, lang),
+        content("home", user, balance, users, uploads),
         reply_markup=about_kb("home")
     )
     await call.answer()
@@ -273,40 +222,19 @@ async def about(call: CallbackQuery):
 @router.callback_query(F.data.startswith("about_"))
 async def switch(call: CallbackQuery):
     user = call.from_user
-    lang = user_lang.get(user.id, "id")
-
     tab = call.data.replace("about_", "")
 
+    allowed = {"home", "system", "features", "stats", "earn", "vip"}
+    if tab not in allowed:
+        return await call.answer("Tab tidak valid", show_alert=True)
+
     balance = await get_user_balance(user.id)
     users = await total_users()
     uploads = await total_uploads()
 
     await call.message.edit_text(
-        content(tab, user, balance, users, uploads, lang),
+        content(tab, user, balance, users, uploads),
         reply_markup=about_kb(tab)
-    )
-    await call.answer()
-
-
-# =========================
-# LANGUAGE TOGGLE
-# =========================
-@router.callback_query(F.data == "about_lang")
-async def change_lang(call: CallbackQuery):
-    user = call.from_user
-
-    current = user_lang.get(user.id, "id")
-    user_lang[user.id] = "en" if current == "id" else "id"
-
-    lang = user_lang[user.id]
-
-    balance = await get_user_balance(user.id)
-    users = await total_users()
-    uploads = await total_uploads()
-
-    await call.message.edit_text(
-        content("home", user, balance, users, uploads, lang),
-        reply_markup=about_kb("home")
     )
     await call.answer()
 
