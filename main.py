@@ -3,7 +3,7 @@ import sys
 import os
 
 # =========================
-# FIX PATH (WAJIB PALING ATAS)
+# FIX PATH
 # =========================
 sys.path.insert(0, os.getcwd())
 
@@ -16,7 +16,14 @@ from aiogram.enums import ParseMode
 
 from core.config import BOT_TOKEN
 from db.pool import init_db
-from bot.router import router
+
+# =========================
+# IMPORT ALL ROUTERS
+# =========================
+from bot.handlers.start import router as start_router
+from bot.handlers.user_callbacks import router as user_router
+from bot.handlers.admin_panel import router as admin_router
+from bot.handlers.admin_callbacks import router as admin_cb_router
 
 
 async def main():
@@ -27,15 +34,25 @@ async def main():
 
     dp = Dispatcher()
 
-    # init db
+    # =========================
+    # INIT DATABASE
+    # =========================
     await init_db()
 
-    # register router
-    dp.include_router(router)
+    # =========================
+    # REGISTER ROUTERS (IMPORTANT ORDER)
+    # =========================
+    dp.include_router(start_router)
+    dp.include_router(user_router)
+    dp.include_router(admin_router)
+    dp.include_router(admin_cb_router)
 
-    print("🔥 BOT STARTED")
+    print("🔥 BOT STARTED SUCCESSFULLY")
 
-    await dp.start_polling(bot)
+    await dp.start_polling(
+        bot,
+        allowed_updates=dp.resolve_used_update_types()
+    )
 
 
 if __name__ == "__main__":
