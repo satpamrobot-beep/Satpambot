@@ -1,5 +1,6 @@
 import random
 import string
+import asyncio
 
 
 # =========================
@@ -27,9 +28,9 @@ def build_media_part(photo: int = 0, video: int = 0, doc: int = 0) -> str:
 
 
 # =========================
-# ANTI DUPLICATE CODE GENERATOR
+# ANTI DUPLICATE CODE (POOLER SAFE)
 # =========================
-def generate_upload_code(
+async def generate_upload_code(
     check_func,
     photo: int = 0,
     video: int = 0,
@@ -48,12 +49,14 @@ def generate_upload_code(
         else:
             code = f"{prefix}_{base}"
 
-        # CEK DUPLIKAT
         try:
-            if not check_func(code):
+            exists = await check_func(code)
+
+            if not exists:
                 return code
-        except Exception:
-            # kalau DB error, tetap generate ulang
+
+        except Exception as e:
+            print("[generate_upload_code error]", e)
             continue
 
     raise Exception("Failed to generate unique upload code after max retry")
