@@ -16,27 +16,44 @@ def random_id(length: int = 12) -> str:
 def build_media_part(photo: int = 0, video: int = 0, doc: int = 0) -> str:
     parts = []
 
-    if photo:
+    if photo > 0:
         parts.append(f"{photo}p")
-    if video:
+    if video > 0:
         parts.append(f"{video}v")
-    if doc:
+    if doc > 0:
         parts.append(f"{doc}d")
 
     return "_".join(parts)
 
 
 # =========================
-# MAIN CODE GENERATOR
+# ANTI DUPLICATE CODE GENERATOR
 # =========================
 def generate_upload_code(
+    check_func,
     photo: int = 0,
     video: int = 0,
     doc: int = 0,
-    prefix: str = "Earnfilebot"
+    prefix: str = "Earnfilebot",
+    max_retry: int = 10
 ) -> str:
 
-    base = random_id(14)
-    media_part = build_media_part(photo, video, doc)
+    for _ in range(max_retry):
 
-    return f"{prefix}_{base}_{media_part}" if media_part else f"{prefix}_{base}"
+        base = random_id(14)
+        media_part = build_media_part(photo, video, doc)
+
+        if media_part:
+            code = f"{prefix}_{base}_{media_part}"
+        else:
+            code = f"{prefix}_{base}"
+
+        # CEK DUPLIKAT
+        try:
+            if not check_func(code):
+                return code
+        except Exception:
+            # kalau DB error, tetap generate ulang
+            continue
+
+    raise Exception("Failed to generate unique upload code after max retry")
