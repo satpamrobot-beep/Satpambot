@@ -7,10 +7,17 @@ pool = None
 async def init_db():
     global pool
 
+    DATABASE_URL = os.getenv("DATABASE_URL")
+
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL belum diisi di environment")
+
     pool = await asyncpg.create_pool(
-        os.getenv("DATABASE_URL"),
+        dsn=DATABASE_URL,
         min_size=1,
-        max_size=10
+        max_size=10,
+        command_timeout=60,
+        statement_cache_size=0  # 🔥 FIX PGBouncer ERROR
     )
 
     print("✅ POOLER CONNECTED")
@@ -28,3 +35,4 @@ async def close_db():
     if pool:
         await pool.close()
         pool = None
+        print("🔒 POOL CLOSED")
