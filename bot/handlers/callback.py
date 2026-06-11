@@ -7,22 +7,28 @@ router = Router()
 
 
 # =========================
-# FORMAT ACCOUNT
+# FORMAT TEXT
 # =========================
 def account_text(user, idr, usd):
+    username = f"@{user.username}" if user.username else "-"
+
     return (
         "👤 <b>ACCOUNT INFO</b>\n"
         "━━━━━━━━━━━━━━\n"
         f"ID      : <code>{user.id}</code>\n"
         f"Name    : {user.full_name}\n"
-        f"Username: @{user.username if user.username else '-'}\n"
+        f"Username: {username}\n"
         "━━━━━━━━━━━━━━\n"
-        f"💰 Balance: Rp {idr:,} / ${usd}\n"
+        f"💰 Balance: Rp {idr:,} / ${usd:.2f}\n"
     )
 
 
 def simple_text(title: str):
-    return f"{title}\n━━━━━━━━━━━━━━\n🚧 Coming soon..."
+    return (
+        f"{title}\n"
+        "━━━━━━━━━━━━━━\n"
+        "🚧 Coming soon..."
+    )
 
 
 # =========================
@@ -33,10 +39,7 @@ async def account(call: CallbackQuery):
     user = call.from_user
     idr, usd = await get_balance(user.id)
 
-    await call.message.edit_text(
-        account_text(user, idr, usd),
-        reply_markup=call.message.reply_markup
-    )
+    await call.message.edit_text(account_text(user, idr, usd))
     await call.answer()
 
 
@@ -45,10 +48,7 @@ async def account(call: CallbackQuery):
 # =========================
 @router.callback_query(F.data == "withdraw")
 async def withdraw(call: CallbackQuery):
-    await call.message.edit_text(
-        simple_text("💳 WITHDRAW SYSTEM"),
-        reply_markup=call.message.reply_markup
-    )
+    await call.message.edit_text(simple_text("💳 WITHDRAW"))
     await call.answer()
 
 
@@ -57,10 +57,7 @@ async def withdraw(call: CallbackQuery):
 # =========================
 @router.callback_query(F.data == "upfile")
 async def upfile(call: CallbackQuery):
-    await call.message.edit_text(
-        simple_text("📤 UPFILE"),
-        reply_markup=call.message.reply_markup
-    )
+    await call.message.edit_text(simple_text("📤 UPFILE"))
     await call.answer()
 
 
@@ -69,10 +66,7 @@ async def upfile(call: CallbackQuery):
 # =========================
 @router.callback_query(F.data == "getfile")
 async def getfile(call: CallbackQuery):
-    await call.message.edit_text(
-        simple_text("📥 GETFILE"),
-        reply_markup=call.message.reply_markup
-    )
+    await call.message.edit_text(simple_text("📥 GETFILE"))
     await call.answer()
 
 
@@ -81,10 +75,7 @@ async def getfile(call: CallbackQuery):
 # =========================
 @router.callback_query(F.data == "setting")
 async def setting(call: CallbackQuery):
-    await call.message.edit_text(
-        simple_text("⚙️ SETTING"),
-        reply_markup=call.message.reply_markup
-    )
+    await call.message.edit_text(simple_text("⚙️ SETTING"))
     await call.answer()
 
 
@@ -93,10 +84,7 @@ async def setting(call: CallbackQuery):
 # =========================
 @router.callback_query(F.data == "statistik")
 async def statistik(call: CallbackQuery):
-    await call.message.edit_text(
-        simple_text("📊 STATISTIK"),
-        reply_markup=call.message.reply_markup
-    )
+    await call.message.edit_text(simple_text("📊 STATISTIK"))
     await call.answer()
 
 
@@ -105,10 +93,7 @@ async def statistik(call: CallbackQuery):
 # =========================
 @router.callback_query(F.data == "help")
 async def help(call: CallbackQuery):
-    await call.message.edit_text(
-        simple_text("❓ HELP"),
-        reply_markup=call.message.reply_markup
-    )
+    await call.message.edit_text(simple_text("❓ HELP"))
     await call.answer()
 
 
@@ -118,7 +103,6 @@ async def help(call: CallbackQuery):
 @router.callback_query(F.data == "about")
 async def about(call: CallbackQuery):
     await call.message.edit_text(
-        "ℹ️ <b>About Bot</b>\n━━━━━━━━━━━━━━\nBluebird Earn System v1",
-        reply_markup=call.message.reply_markup
+        "ℹ️ <b>About Bot</b>\n━━━━━━━━━━━━━━\nBluebird Earn System v1"
     )
     await call.answer()
