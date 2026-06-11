@@ -254,8 +254,8 @@ async def price_handler(message: Message, state: FSMContext):
         "🔗 Visibility",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [
-                InlineKeyboardButton("🌍 PUBLIC", callback_data="share_yes"),
-                InlineKeyboardButton("🔒 PRIVATE", callback_data="share_no")
+                InlineKeyboardButton(text="🌍 PUBLIC", callback_data="share_yes"),
+                InlineKeyboardButton(text="🔒 PRIVATE", callback_data="share_no")
             ]
         ])
     )
@@ -277,7 +277,7 @@ async def share_handler(call: CallbackQuery, state: FSMContext):
         f"Share: {call.data.replace('share_', '').upper()}\n\n"
         "Klik SAVE untuk lanjut",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton("💾 SAVE TO CLOUD", callback_data="save_upload")]
+            [InlineKeyboardButton(text="💾 SAVE TO CLOUD", callback_data="save_upload")]
         ])
     )
 
