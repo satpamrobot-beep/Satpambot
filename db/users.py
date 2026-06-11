@@ -41,3 +41,11 @@ async def get_balance(user_id: int):
     except Exception as e:
         print("[get_balance error]", e)
         return 0, 0
+
+
+# =========================
+# GET USER BALANCE
+# =========================
+async def get_user_balance(user_id: int):
+    balance, _ = await get_balance(user_id)
+    return balance
