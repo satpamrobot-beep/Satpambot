@@ -8,6 +8,7 @@ from aiogram.types import (
     InlineKeyboardButton
 )
 from aiogram.filters import CommandStart
+from aiogram.exceptions import TelegramBadRequest
 
 from db.users import add_user, get_user_balance
 from services.join import is_joined
@@ -90,7 +91,7 @@ def dashboard_text(user, balance_rp: int):
 
 
 # =========================
-# START
+# START (ULTRA FAST)
 # =========================
 @router.message(CommandStart())
 async def start(message: Message):
@@ -110,47 +111,66 @@ async def start(message: Message):
 
     balance = await get_user_balance(user.id)
 
-    # ❌ HAPUS loading animation (ini penyebab delay)
     await message.answer(
         dashboard_text(user, balance),
         reply_markup=dashboard_kb()
     )
+
+
 # =========================
-# CHECK JOIN
+# CHECK JOIN (FAST + SAFE)
 # =========================
 @router.callback_query(F.data == "check_join")
 async def check_join(call: CallbackQuery):
     user = call.from_user
 
-    if await is_joined(call.bot, user.id):
-        balance = await get_user_balance(user.id)
+    if not await is_joined(call.bot, user.id):
+        return await call.answer("❌ Kamu belum join semua", show_alert=True)
 
-        try:
-            await call.message.edit_text("✅ Verifying...")
-        except:
-            pass
+    balance = await get_user_balance(user.id)
 
-        await asyncio.sleep(0.4)
+    try:
+        # kalau sama, skip biar gak error "message not modified"
+        if call.message.text == dashboard_text(user, balance):
+            return await call.answer("✅ Already updated")
+    except:
+        pass
 
+    try:
+        await call.message.edit_text(
+            "✅ Verifying..."
+        )
+    except TelegramBadRequest:
+        pass
+
+    await asyncio.sleep(0.2)
+
+    try:
         await call.message.edit_text(
             dashboard_text(user, balance),
             reply_markup=dashboard_kb()
         )
+    except TelegramBadRequest:
+        pass
 
-        await call.answer()
+    await call.answer()
 
-    else:
-        await call.answer("❌ Kamu belum join semua", show_alert=True)
 
+# =========================
+# BACK HOME (SAFE)
+# =========================
 @router.callback_query(F.data == "back_home")
 async def back_home(call: CallbackQuery):
     user = call.from_user
 
     balance = await get_user_balance(user.id)
 
-    await call.message.edit_text(
-        dashboard_text(user, balance),
-        reply_markup=dashboard_kb()
-    )
+    try:
+        await call.message.edit_text(
+            dashboard_text(user, balance),
+            reply_markup=dashboard_kb()
+        )
+    except TelegramBadRequest:
+        pass
 
     await call.answer()
