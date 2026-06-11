@@ -5,10 +5,13 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 from config import BOT_TOKEN
+from db.pool import init_db, close_db
 from bot.router import router
 
 
 async def main():
+    await init_db()
+
     bot = Bot(
         token=BOT_TOKEN,
         default=DefaultBotProperties(
@@ -16,28 +19,29 @@ async def main():
         )
     )
 
-    # hapus webhook lama jika ada
-    await bot.delete_webhook(
-        drop_pending_updates=True
-    )
-
     dp = Dispatcher()
 
-    # register router
     dp.include_router(router)
 
-    me = await bot.get_me()
+    try:
+        # hapus webhook lama
+        await bot.delete_webhook(
+            drop_pending_updates=True
+        )
 
-    print(f"🔥 BOT RUNNING: @{me.username}")
+        me = await bot.get_me()
 
-    await dp.start_polling(
-        bot,
-        allowed_updates=dp.resolve_used_update_types()
-    )
+        print(f"🔥 BOT RUNNING: @{me.username}")
+
+        await dp.start_polling(
+            bot,
+            allowed_updates=dp.resolve_used_update_types()
+        )
+
+    finally:
+        await close_db()
+        await bot.session.close()
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("🛑 BOT STOPPED")
+    asyncio.run(main())
