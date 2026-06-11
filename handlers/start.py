@@ -96,13 +96,11 @@ def dashboard_text(user, balance_rp: int):
 async def start(message: Message):
     user = message.from_user
 
-    # save user
     try:
         await add_user(user.id, user.username, user.first_name)
-    except Exception as e:
-        print("[add_user error]", e)
+    except:
+        pass
 
-    # check join
     if not await is_joined(message.bot, user.id):
         await message.answer(
             "⚠️ Join channel & group dulu sebelum lanjut.",
@@ -112,22 +110,11 @@ async def start(message: Message):
 
     balance = await get_user_balance(user.id)
 
-    msg = await message.answer("⚡ Loading...")
-
-    await asyncio.sleep(0.3)
-    await msg.edit_text("👤 Loading user...")
-
-    await asyncio.sleep(0.3)
-    await msg.edit_text("💳 Loading balance...")
-
-    await asyncio.sleep(0.3)
-
-    await msg.edit_text(
+    # ❌ HAPUS loading animation (ini penyebab delay)
+    await message.answer(
         dashboard_text(user, balance),
         reply_markup=dashboard_kb()
     )
-
-
 # =========================
 # CHECK JOIN
 # =========================
