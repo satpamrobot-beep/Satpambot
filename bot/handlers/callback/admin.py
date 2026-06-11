@@ -5,7 +5,7 @@ from bot.keyboards.admin import admin_dashboard_kb
 
 router = Router()
 
-ADMIN_IDS = [6847035364]  # ganti sesuai ID kamu
+ADMIN_IDS = {6847035364}  # pakai set biar lebih cepat & aman
 
 
 # =========================
@@ -22,10 +22,9 @@ def is_admin(user_id: int) -> bool:
 async def admin_panel(call: CallbackQuery):
     user_id = call.from_user.id
 
-    # ⚡ admin validation
-    if not is_admin(user_id):
-        await call.answer("❌ Not allowed", show_alert=True)
-        return
+    # ⚡ ADMIN CHECK
+    if user_id not in ADMIN_IDS:
+        return await call.answer("❌ Not allowed", show_alert=True)
 
     text = (
         "👑 <b>ADMIN DASHBOARD</b>\n"
@@ -35,13 +34,16 @@ async def admin_panel(call: CallbackQuery):
         "Pilih menu di bawah 👇"
     )
 
+    # =========================
+    # SAFE EDIT (ANTI ERROR)
+    # =========================
     try:
         await call.message.edit_text(
             text,
             reply_markup=admin_dashboard_kb()
         )
-    except:
-        # fallback kalau edit gagal (misalnya message lama)
+    except Exception:
+        # kalau message tidak bisa diedit → fallback
         await call.message.answer(
             text,
             reply_markup=admin_dashboard_kb()
