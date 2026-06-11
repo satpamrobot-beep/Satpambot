@@ -4,7 +4,6 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 from config import BOT_TOKEN
-from db.pool import init_db
 from bot.router import router
 
 
@@ -16,8 +15,7 @@ async def main():
 
     dp = Dispatcher()
 
-    await init_db()
-
+    # register all handlers
     dp.include_router(router)
 
     print("🔥 BOT RUNNING")
