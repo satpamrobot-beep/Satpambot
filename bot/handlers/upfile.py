@@ -161,16 +161,20 @@ async def upfile(
 
     try:
 
-        await call.message.edit_text(
-            "📁 <b>UPLOAD MODE</b>\n\n"
-            "📦 Uploading: 0/100\n\n"
-            "Kirim file kamu...",
+        msg = await call.message.edit_text(
+            (
+                "📁 <b>UPLOAD MODE</b>\n\n"
+                "📦 Total     : 0/100\n"
+                "🖼 Photo     : 0\n"
+                "🎥 Video     : 0\n"
+                "📄 Document  : 0\n\n"
+                "👇 Kirim file kamu"
+            ),
             reply_markup=UPLOAD_KB,
             parse_mode="HTML"
         )
 
-        # simpan panel utama
-        SESSION[uid]["msg"] = call.message
+        SESSION[uid]["msg"] = msg or call.message
 
     except Exception as e:
 
@@ -271,6 +275,25 @@ async def receive(
                 )
             )
 
+        # =========================
+        # COUNTER
+        # =========================
+
+        photo_count = sum(
+            1 for x in sess["media"]
+            if x[0] == "photo"
+        )
+
+        video_count = sum(
+            1 for x in sess["media"]
+            if x[0] == "video"
+        )
+
+        doc_count = sum(
+            1 for x in sess["media"]
+            if x[0] == "doc"
+        )
+
         total = len(sess["media"])
 
         # =========================
@@ -295,14 +318,22 @@ async def receive(
                 await panel.edit_text(
                     (
                         "📁 <b>UPLOAD MODE</b>\n\n"
-                        f"📦 Uploading: {total}/{MAX_MEDIA}"
+                        f"📦 Total     : {total}/{MAX_MEDIA}\n"
+                        f"🖼 Photo     : {photo_count}\n"
+                        f"🎥 Video     : {video_count}\n"
+                        f"📄 Document  : {doc_count}\n\n"
+                        "👇 Klik DONE jika selesai"
                     ),
                     reply_markup=UPLOAD_KB,
                     parse_mode="HTML"
                 )
 
-        except Exception:
-            pass
+        except Exception as e:
+
+            print(
+                "UPLOAD PANEL ERROR:",
+                e
+            )
 # =========================
 # DONE
 # =========================
