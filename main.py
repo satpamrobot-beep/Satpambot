@@ -2,28 +2,22 @@ import asyncio
 import sys
 import os
 
-# =========================
-# FIX PATH
-# =========================
 sys.path.insert(0, os.getcwd())
-
-print("PROJECT ROOT FILES:", os.listdir("."))
-
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from core.config import BOT_TOKEN
+from config import BOT_TOKEN
 from db.pool import init_db
 
 # =========================
-# IMPORT ALL ROUTERS
+# HANDLERS IMPORT (SESUAI STRUKTUR KAMU)
 # =========================
-from bot.handlers.start import router as start_router
-from bot.handlers.user_callbacks import router as user_router
-from bot.handlers.admin_panel import router as admin_router
-from bot.handlers.admin_callbacks import router as admin_cb_router
+from handlers import start
+from handlers import user_callbacks
+from handlers import admin_panel
+from handlers import admin_callbacks
 
 
 async def main():
@@ -34,25 +28,17 @@ async def main():
 
     dp = Dispatcher()
 
-    # =========================
-    # INIT DATABASE
-    # =========================
     await init_db()
 
-    # =========================
-    # REGISTER ROUTERS (IMPORTANT ORDER)
-    # =========================
-    dp.include_router(start_router)
-    dp.include_router(user_router)
-    dp.include_router(admin_router)
-    dp.include_router(admin_cb_router)
+    # register routers
+    dp.include_router(start.router)
+    dp.include_router(user_callbacks.router)
+    dp.include_router(admin_panel.router)
+    dp.include_router(admin_callbacks.router)
 
-    print("🔥 BOT STARTED SUCCESSFULLY")
+    print("🔥 BOT RUNNING (PRODUCTION READY)")
 
-    await dp.start_polling(
-        bot,
-        allowed_updates=dp.resolve_used_update_types()
-    )
+    await dp.start_polling(bot, skip_updates=True)
 
 
 if __name__ == "__main__":
