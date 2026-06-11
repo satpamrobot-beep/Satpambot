@@ -2,31 +2,37 @@ from config import FORCE_CHANNEL, GROUP_ID
 
 
 # =========================
-# CHECK JOIN (CHANNEL + GROUP)
+# CHECK JOIN (PRODUCTION READY)
 # =========================
 async def is_joined(bot, user_id: int) -> bool:
     """
-    Return True kalau user sudah join CHANNEL + GROUP
+    Return True jika user sudah join channel + group
     """
 
     try:
-        # cek channel
         ch = await bot.get_chat_member(FORCE_CHANNEL, user_id)
-
-        # cek group
         gr = await bot.get_chat_member(GROUP_ID, user_id)
 
-        # status yang dianggap TIDAK JOIN
-        bad_status = ["left", "kicked"]
+        # status yang TIDAK VALID JOIN
+        bad_status = {"left", "kicked", "restricted"}
 
-        if ch.status in bad_status:
+        # status yang VALID JOIN
+        good_status = {"member", "administrator", "creator"}
+
+        # =========================
+        # CHANNEL CHECK
+        # =========================
+        if ch.status not in good_status:
             return False
 
-        if gr.status in bad_status:
+        # =========================
+        # GROUP CHECK
+        # =========================
+        if gr.status not in good_status:
             return False
 
         return True
 
-    except Exception:
-        # kalau bot belum admin / error telegram API
+    except Exception as e:
+        print("[JOIN CHECK ERROR]", e)
         return False
