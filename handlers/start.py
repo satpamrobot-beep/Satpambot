@@ -9,7 +9,7 @@ from aiogram.types import (
 )
 from aiogram.filters import CommandStart
 
-from config import FORCE_CHANNEL, NOTIFICATION_CHANNEL
+from config import FORCE_CHANNEL
 from db.users import add_user, get_user_balance
 from services.join import is_joined
 
@@ -78,7 +78,7 @@ def dashboard_text(user, balance: int):
         f"🆔 ID : <code>{user.id}</code>\n"
         f"👤 Username : {username}\n"
         f"💰 Balance : Rp {balance:,}\n"
-        "━━━━━━━━━━━━━━\n"
+        "━━━━━━━━━━━━━━"
     )
 
 
@@ -89,10 +89,13 @@ def dashboard_text(user, balance: int):
 async def start(message: Message):
     user = message.from_user
 
-    asyncio.create_task(
-        add_user(user.id, user.username, user.full_name)
-    )
+    # SAVE USER (NO SILENT FAIL)
+    try:
+        await add_user(user.id, user.username, user.full_name)
+    except Exception as e:
+        print("[add_user error]", e)
 
+    # FORCE JOIN CHECK
     if not await is_joined(message.bot, user.id):
         await message.answer(
             "⚠️ Kamu harus join dulu sebelum lanjut",
@@ -118,11 +121,10 @@ async def check_join(call: CallbackQuery):
     if await is_joined(call.bot, user.id):
         balance = await get_user_balance(user.id)
 
-        await call.message.delete()
-
-        await call.message.answer(
+        await call.message.edit_text(
             dashboard_text(user, balance),
             reply_markup=dashboard_kb()
         )
+        await call.answer()
     else:
         await call.answer("❌ Kamu belum join semua", show_alert=True)
