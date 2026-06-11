@@ -17,7 +17,7 @@ from aiogram.fsm.state import StatesGroup, State
 from db.pool import get_pool
 
 router = Router()
-
+UPLOAD_LOCKS = {}
 SESSION = {}
 
 MAX_MEDIA = 100
@@ -132,13 +132,16 @@ def kb_save():
 # =========================
 
 @router.callback_query(F.data == "upfile")
-async def upfile(call: CallbackQuery, state: FSMContext):
+async def upfile(
+    call: CallbackQuery,
+    state: FSMContext
+):
 
     uid = call.from_user.id
 
     if SESSION.get(uid, {}).get("active"):
         return await call.answer(
-            "⛔ masih upload",
+            "⛔ Masih ada sesi upload aktif",
             show_alert=True
         )
 
@@ -157,16 +160,25 @@ async def upfile(call: CallbackQuery, state: FSMContext):
     )
 
     try:
+
         await call.message.edit_text(
-            "📁 <b>UPLOAD MODE</b>\n\nKirim file kamu",
-            reply_markup=UPLOAD_KB
+            "📁 <b>UPLOAD MODE</b>\n\n"
+            "📦 Uploading: 0/100\n\n"
+            "Kirim file kamu...",
+            reply_markup=UPLOAD_KB,
+            parse_mode="HTML"
         )
-    except:
-        pass
+
+        # simpan panel utama
+        SESSION[uid]["msg"] = call.message
+
+    except Exception as e:
+
+        print(
+            f"UPLOAD PANEL ERROR: {e}"
+        )
 
     await call.answer()
-
-
 # =========================
 # RECEIVE
 # =========================
@@ -181,94 +193,116 @@ async def receive(
 ):
 
     uid = message.from_user.id
-    sess = SESSION.get(uid)
 
-    if not sess or sess.get("done"):
-        return
+    lock = UPLOAD_LOCKS.setdefault(
+        uid,
+        asyncio.Lock()
+    )
 
-    if len(sess["media"]) >= MAX_MEDIA:
-        return await message.answer(
-            f"❌ Maksimal {MAX_MEDIA} file"
-        )
+    async with lock:
 
-    if message.photo:
+        sess = SESSION.get(uid)
 
-        sess["media"].append(
-            (
-                "photo",
-                message.photo[-1].file_id
-            )
-        )
+        if not sess:
+            return
 
-    elif message.video:
+        if sess.get("done"):
+            return
 
-        if (
-            message.video.file_size
-            and
-            message.video.file_size > MAX_FILE_SIZE
-        ):
-            return await message.answer(
-                "❌ Video terlalu besar"
-            )
+        if len(sess["media"]) >= MAX_MEDIA:
 
-        sess["media"].append(
-            (
-                "video",
-                message.video.file_id
-            )
-        )
+            try:
+                await message.delete()
+            except:
+                pass
 
-    elif message.document:
+            return
 
-        if (
-            message.document.file_size
-            and
-            message.document.file_size > MAX_FILE_SIZE
-        ):
-            return await message.answer(
-                "❌ File terlalu besar"
+        # =========================
+        # PHOTO
+        # =========================
+
+        if message.photo:
+
+            sess["media"].append(
+                (
+                    "photo",
+                    message.photo[-1].file_id
+                )
             )
 
-        sess["media"].append(
-            (
-                "doc",
-                message.document.file_id
-            )
-        )
+        # =========================
+        # VIDEO
+        # =========================
 
-    total = len(sess["media"])
+        elif message.video:
 
-    now = time.time()
+            if (
+                message.video.file_size
+                and
+                message.video.file_size > MAX_FILE_SIZE
+            ):
+                return
 
-    if (
-        sess.get("msg")
-        and
-        now - sess.get("last", 0) < 1
-    ):
-        return
-
-    sess["last"] = now
-
-    try:
-
-        if not sess.get("msg"):
-
-            sess["msg"] = await message.answer(
-                f"📦 Uploading: {total}",
-                reply_markup=UPLOAD_KB
+            sess["media"].append(
+                (
+                    "video",
+                    message.video.file_id
+                )
             )
 
-        else:
+        # =========================
+        # DOCUMENT
+        # =========================
 
-            await sess["msg"].edit_text(
-                f"📦 Uploading: {total}",
-                reply_markup=UPLOAD_KB
+        elif message.document:
+
+            if (
+                message.document.file_size
+                and
+                message.document.file_size > MAX_FILE_SIZE
+            ):
+                return
+
+            sess["media"].append(
+                (
+                    "doc",
+                    message.document.file_id
+                )
             )
 
-    except:
-        pass
+        total = len(sess["media"])
 
+        # =========================
+        # HAPUS PESAN USER
+        # =========================
 
+        try:
+            await message.delete()
+        except:
+            pass
+
+        # =========================
+        # UPDATE PANEL
+        # =========================
+
+        try:
+
+            panel = sess.get("msg")
+
+            if panel:
+
+                await panel.edit_text(
+                    (
+                        "📁 <b>UPLOAD MODE</b>\n\n"
+                        f"📦 Uploading: {total}/{MAX_MEDIA}"
+                    ),
+                    reply_markup=UPLOAD_KB,
+                    parse_mode="HTML"
+                )
+
+        except Exception:
+            pass
 # =========================
 # DONE
 # =========================
