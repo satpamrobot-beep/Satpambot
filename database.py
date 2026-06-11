@@ -3,9 +3,9 @@ from config import SUPABASE_URL, SUPABASE_KEY
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# =========================
+# =========================================================
 # USERS
-# =========================
+# =========================================================
 
 def add_user(user_id, username=None, first_name=None):
     try:
@@ -15,31 +15,41 @@ def add_user(user_id, username=None, first_name=None):
             "first_name": first_name
         }).execute()
     except Exception as e:
-        print("add_user error:", e)
+        print("[add_user error]", e)
+        return None
 
 
-def is_admin(user_id):
-    try:
-        res = supabase.table("admins").select("user_id").eq("user_id", user_id).execute()
-        return bool(res.data)
-    except Exception as e:
-        print("is_admin error:", e)
-        return False
-
-
-# 🔥 FIX IMPORTANT (INI YANG KAMU TANYA)
 def get_all_users():
     try:
         res = supabase.table("users").select("user_id").execute()
         return res.data or []
     except Exception as e:
-        print("get_all_users error:", e)
+        print("[get_all_users error]", e)
         return []
 
 
-# =========================
-# UPLOADS
-# =========================
+# =========================================================
+# ADMIN
+# =========================================================
+
+def is_admin(user_id):
+    try:
+        res = (
+            supabase.table("admins")
+            .select("user_id")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        return bool(res.data)
+    except Exception as e:
+        print("[is_admin error]", e)
+        return False
+
+
+# =========================================================
+# UPLOAD SYSTEM
+# =========================================================
 
 def create_upload(code, owner_id, total_files, total_size):
     try:
@@ -50,21 +60,28 @@ def create_upload(code, owner_id, total_files, total_size):
             "total_size": total_size
         }).execute()
     except Exception as e:
-        print("create_upload error:", e)
+        print("[create_upload error]", e)
+        return None
 
 
 def get_upload(code):
     try:
-        res = supabase.table("uploads").select("*").eq("code", code).limit(1).execute()
+        res = (
+            supabase.table("uploads")
+            .select("*")
+            .eq("code", code)
+            .limit(1)
+            .execute()
+        )
         return res.data[0] if res.data else None
     except Exception as e:
-        print("get_upload error:", e)
+        print("[get_upload error]", e)
         return None
 
 
-# =========================
-# MEDIA
-# =========================
+# =========================================================
+# MEDIA SYSTEM
+# =========================================================
 
 def add_media(code, message_id, media_type, file_name=None, file_size=0):
     try:
@@ -76,7 +93,8 @@ def add_media(code, message_id, media_type, file_name=None, file_size=0):
             "file_size": file_size
         }).execute()
     except Exception as e:
-        print("add_media error:", e)
+        print("[add_media error]", e)
+        return None
 
 
 def get_media(code):
@@ -90,13 +108,13 @@ def get_media(code):
         )
         return res.data or []
     except Exception as e:
-        print("get_media error:", e)
+        print("[get_media error]", e)
         return []
 
 
-# =========================
-# STATISTICS (OPTIMIZED)
-# =========================
+# =========================================================
+# STATISTICS
+# =========================================================
 
 def total_users():
     try:
@@ -108,7 +126,7 @@ def total_users():
 
 def total_codes():
     try:
-        res = supabase.table("uploads").select("code", count="exact").execute()
+        res = supabase.table("uploads").select("id", count="exact").execute()
         return res.count or 0
     except:
         return 0
@@ -139,9 +157,9 @@ def get_statistics():
     }
 
 
-# =========================
+# =========================================================
 # PAGINATION
-# =========================
+# =========================================================
 
 def get_media_page(code, page=1, per_page=5):
     try:
@@ -154,7 +172,8 @@ def get_media_page(code, page=1, per_page=5):
         end = start + per_page
 
         return media[start:end]
-    except:
+    except Exception as e:
+        print("[get_media_page error]", e)
         return []
 
 
