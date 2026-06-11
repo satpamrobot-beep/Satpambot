@@ -154,3 +154,16 @@ async def check_join(call: CallbackQuery):
 
     else:
         await call.answer("❌ Kamu belum join semua", show_alert=True)
+
+@router.callback_query(F.data == "back_home")
+async def back_home(call: CallbackQuery):
+    user = call.from_user
+
+    balance = await get_user_balance(user.id)
+
+    await call.message.edit_text(
+        dashboard_text(user, balance),
+        reply_markup=dashboard_kb()
+    )
+
+    await call.answer()
