@@ -1,14 +1,25 @@
-from db.supabase import supabase
+from db.pool import get_pool
 
 
-def add_user(user_id, username=None, full_name=None):
-    return supabase.table("users").upsert({
-        "user_id": user_id,
-        "username": username,
-        "full_name": full_name
-    }).execute()
+async def add_user(user_id: int, username: str = None, first_name: str = None):
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO users (user_id, username, first_name)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (user_id) DO NOTHING
+        """, user_id, username, first_name)
 
 
-def get_user_balance(user_id: int):
-    res = supabase.table("users").select("balance").eq("user_id", user_id).single().execute()
-    return res.data["balance"] if res.data else 0
+async def get_balance(user_id: int):
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT balance FROM users WHERE user_id = $1
+        """, user_id)
+
+        if not row:
+            return 0, 0
+
+        balance = row["balance"]
+        return balance, 0
