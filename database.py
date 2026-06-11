@@ -3,17 +3,19 @@ import os
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-pool: asyncpg.Pool | None = None
+pool = None
 
 
 async def init_db():
     global pool
+
     pool = await asyncpg.create_pool(
         DATABASE_URL,
         min_size=1,
         max_size=10
     )
-    print("✅ PostgreSQL Pool Connected")
+
+    print("✅ Supabase Pooler Connected")
 
 
 def get_pool():
