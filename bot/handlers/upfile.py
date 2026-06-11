@@ -211,8 +211,6 @@ async def cancel(call: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.in_({"type_free", "type_paid"}))
 async def type_handler(call: CallbackQuery, state: FSMContext):
 
-    data = await state.get_data()
-
     is_paid = call.data == "type_paid"
     await state.update_data(is_paid=is_paid)
 
@@ -223,15 +221,14 @@ async def type_handler(call: CallbackQuery, state: FSMContext):
         await state.update_data(price=0)
         await state.set_state(UploadState.share)
 
-        await call.message.edit_text(
-            "🔗 Visibility",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="🌍 PUBLIC", callback_data="share_yes"),
-                    InlineKeyboardButton(text="🔒 PRIVATE", callback_data="share_no")
-                ]
-            ])
-        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🌍 PUBLIC", callback_data="share_yes"),
+                InlineKeyboardButton(text="🔒 PRIVATE", callback_data="share_no")
+            ]
+        ])
+
+        await call.message.edit_text("🔗 Visibility", reply_markup=kb)
 
     await call.answer()
 
@@ -239,7 +236,7 @@ async def type_handler(call: CallbackQuery, state: FSMContext):
 @router.message(UploadState.price)
 async def price_handler(message: Message, state: FSMContext):
 
-    if not message.text.isdigit():
+    if not message.text or not message.text.isdigit():
         return await message.answer("❌ angka saja")
 
     price = int(message.text)
@@ -250,16 +247,14 @@ async def price_handler(message: Message, state: FSMContext):
     await state.update_data(price=price)
     await state.set_state(UploadState.share)
 
-    await message.answer(
-        "🔗 Visibility",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🌍 PUBLIC", callback_data="share_yes"),
-                InlineKeyboardButton(text="🔒 PRIVATE", callback_data="share_no")
-            ]
-        ])
-    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🌍 PUBLIC", callback_data="share_yes"),
+            InlineKeyboardButton(text="🔒 PRIVATE", callback_data="share_no")
+        ]
+    ])
 
+    await message.answer("🔗 Visibility", reply_markup=kb)
 
 @router.callback_query(F.data.in_({"share_yes", "share_no"}))
 async def share_handler(call: CallbackQuery, state: FSMContext):
