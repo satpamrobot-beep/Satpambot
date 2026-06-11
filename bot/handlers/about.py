@@ -1,6 +1,6 @@
 from datetime import datetime
 import time
-
+from aiogram.exceptions import TelegramBadRequest
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -256,13 +256,15 @@ async def about(call: CallbackQuery):
     balance = await get_user_balance(user.id)
     users, uploads = await get_stats()
 
-    await call.message.edit_text(
-        content("home", user, balance, users, uploads),
-        reply_markup=about_kb("home")
-    )
+    try:
+        await call.message.edit_text(
+            content("home", user, balance, users, uploads),
+            reply_markup=about_kb("home")
+        )
+    except TelegramBadRequest:
+        pass
+
     await call.answer()
-
-
 # =========================
 # SWITCH TAB (ANTI ERROR FIX)
 # =========================
@@ -273,28 +275,29 @@ async def switch(call: CallbackQuery):
 
     allowed = {"home", "system", "features", "stats", "earn", "vip"}
     if tab not in allowed:
-        return await call.answer("Tab tidak valid", show_alert=True)
+        return await call.answer()
 
     balance = await get_user_balance(user.id)
     users, uploads = await get_stats()
 
     new_text = content(tab, user, balance, users, uploads)
+    new_kb = about_kb(tab)
 
-    # 🔥 FIX: kalau sama jangan edit (ANTI ERROR message not modified)
-    if call.message.text and tab in call.message.text:
+    # 🔥 CEGAH EDIT SAMA (BIAR GAK ERROR)
+    current = call.message.text or ""
+    if current and tab in current:
         return await call.answer()
 
     try:
         await call.message.edit_text(
             new_text,
-            reply_markup=about_kb(tab)
+            reply_markup=new_kb
         )
-    except:
+    except TelegramBadRequest:
+        # kalau masih sama / telegram nolak → skip aja
         pass
 
     await call.answer()
-
-
 # =========================
 # BACK HOME
 # =========================
