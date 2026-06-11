@@ -173,9 +173,7 @@ async def upfile(call: CallbackQuery, state: FSMContext):
 
 @router.message(
     UploadState.collecting,
-    F.content_type.in_(
-        {"photo", "video", "document"}
-    )
+    F.photo | F.video | F.document
 )
 async def receive(
     message: Message,
@@ -483,9 +481,7 @@ async def share_handler(
 # SAVE
 # =========================
 
-@router.callback_query(
-    F.data == "save_upload"
-)
+@router.callback_query(F.data == "save_upload")
 async def save(
     call: CallbackQuery,
     state: FSMContext
@@ -504,14 +500,13 @@ async def save(
         else user.full_name
     )
 
-    code = (
-        f"earnfilebot_{rand(14)}_"
-        f"{build_media_tag(
-            data.get('photo', 0),
-            data.get('video', 0),
-            data.get('doc', 0)
-        )}"
+    tag = build_media_tag(
+        data.get("photo", 0),
+        data.get("video", 0),
+        data.get("doc", 0)
     )
+
+    code = f"earnfilebot_{rand(14)}_{tag}"
 
     try:
 
