@@ -11,7 +11,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 CHANNEL_DB = os.getenv("CHANNEL_DB")
-
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 # =========================
 # OWNER & ADMINS
 # =========================
