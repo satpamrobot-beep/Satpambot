@@ -227,8 +227,8 @@ async def type_handler(call: CallbackQuery, state: FSMContext):
             "🔗 Visibility",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [
-                    InlineKeyboardButton("🌍 PUBLIC", callback_data="share_yes"),
-                    InlineKeyboardButton("🔒 PRIVATE", callback_data="share_no")
+                    InlineKeyboardButton(text="🌍 PUBLIC", callback_data="share_yes"),
+                    InlineKeyboardButton(text="🔒 PRIVATE", callback_data="share_no")
                 ]
             ])
         )
