@@ -1,25 +1,43 @@
-from db.pool import get_pool
+from supabase import create_client
+from config import SUPABASE_URL, SUPABASE_KEY
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
+# =========================
+# ADD USER
+# =========================
 async def add_user(user_id: int, username: str = None, first_name: str = None):
-    pool = get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute("""
-            INSERT INTO users (user_id, username, first_name)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (user_id) DO NOTHING
-        """, user_id, username, first_name)
+    try:
+        supabase.table("users").upsert({
+            "user_id": user_id,
+            "username": username,
+            "first_name": first_name,
+            "balance": 0
+        }).execute()
+    except Exception as e:
+        print("[add_user error]", e)
 
 
+# =========================
+# GET BALANCE
+# =========================
 async def get_balance(user_id: int):
-    pool = get_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow("""
-            SELECT balance FROM users WHERE user_id = $1
-        """, user_id)
+    try:
+        res = (
+            supabase.table("users")
+            .select("balance")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
 
-        if not row:
+        if not res.data:
             return 0, 0
 
-        balance = row["balance"]
+        balance = res.data[0].get("balance", 0)
         return balance, 0
+
+    except Exception as e:
+        print("[get_balance error]", e)
+        return 0, 0
