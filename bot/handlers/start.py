@@ -1,17 +1,38 @@
-import asyncio
 from aiogram import Router, F
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import (
+    Message,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    CallbackQuery
+)
 from aiogram.filters import CommandStart
 
-from db.users import ensure_user
-from bot.services.join import is_joined
-from bot.services.wallet import get_balance
+from db.users import ensure_user, get_balance
 
 router = Router()
 
+# =========================
+# CONFIG
+# =========================
+ADMIN_IDS = [6847035364]
+
+CHANNEL_ID = -1003712587847
+GROUP_ID = -1003920865154
+
 
 # =========================
-# UI
+# FORCE JOIN KB
+# =========================
+def force_join_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📢 Channel Update", url="https://t.me/yourchannel")],
+        [InlineKeyboardButton(text="💬 Group Chat", url="https://t.me/yourgroup")],
+        [InlineKeyboardButton(text="✅ Done Cek", callback_data="check_join")]
+    ])
+
+
+# =========================
+# DASHBOARD KB
 # =========================
 def dashboard_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -34,67 +55,109 @@ def dashboard_kb():
     ])
 
 
-def force_join_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📢 Channel", url="https://t.me/yourchannel")],
-        [InlineKeyboardButton(text="💬 Group", url="https://t.me/yourgroup")],
-        [InlineKeyboardButton(text="✅ Check", callback_data="check_join")]
-    ])
+# =========================
+# JOIN CHECK (SAFE)
+# =========================
+async def is_joined(bot, user_id: int) -> bool:
+    try:
+        ch = await bot.get_chat_member(CHANNEL_ID, user_id)
+        gr = await bot.get_chat_member(GROUP_ID, user_id)
+
+        return ch.status in ("member", "administrator", "creator") and \
+               gr.status in ("member", "administrator", "creator")
+    except:
+        return False
 
 
-def format_dash(user, idr, usd):
+# =========================
+# FORMAT DASHBOARD
+# =========================
+def format_dashboard(user, idr, usd):
+    username = f"@{user.username}" if user.username else "-"
+
     return (
-        "🐧 <b>Bluebird Cede Earn</b>\n"
-        "━━━━━━━━━━━━━━\n"
-        f"👤 ID: <code>{user.id}</code>\n"
-        f"📛 Name: {user.full_name}\n"
-        f"💰 Wallet: Rp {idr:,} / ${usd}\n"
-        "━━━━━━━━━━━━━━"
+        "🐧 <b>Bluebird Code Earn</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"👤 ID Account : <code>{user.id}</code>\n"
+        f"📛 Username   : {username}\n"
+        f"🧾 Name       : {user.full_name}\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"💰 Saldo      : Rp {idr:,} / ${usd:.2f}\n"
+        "━━━━━━━━━━━━━━━━━━"
     )
 
 
 # =========================
-# START (ULTRA FAST)
+# START COMMAND (FAST MODE)
 # =========================
 @router.message(CommandStart())
 async def start(message: Message):
     bot = message.bot
     user = message.from_user
 
-    # ⚡ non-block DB write
-    asyncio.create_task(
-        ensure_user(user.id, user.username, user.full_name)
-    )
+    # ⚡ prevent duplicate heavy DB load
+    try:
+        await ensure_user(user.id, user.username, user.full_name)
+    except:
+        pass
 
-    # ⚡ join check cached
+    # ⚡ FORCE JOIN FIRST
     if not await is_joined(bot, user.id):
-        await message.answer("⚠️ Join dulu bro", reply_markup=force_join_kb())
+        await message.answer(
+            "⚠️ Join dulu untuk lanjut pakai bot.",
+            reply_markup=force_join_kb()
+        )
         return
 
+    # ⚡ GET WALLET
     idr, usd = await get_balance(user.id)
 
     await message.answer(
-        format_dash(user, idr, usd),
+        format_dashboard(user, idr, usd),
         reply_markup=dashboard_kb()
     )
+
+    # =========================
+    # ADMIN DETECT (SAFE)
+    # =========================
+    if user.id in ADMIN_IDS:
+        await message.answer(
+            "👑 Admin detected",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="Open Admin Panel",
+                    callback_data="admin_panel"
+                )]
+            ])
+        )
 
 
 # =========================
 # CHECK JOIN CALLBACK
 # =========================
 @router.callback_query(F.data == "check_join")
-async def check(call: CallbackQuery):
+async def check_join(call: CallbackQuery):
     bot = call.bot
     user = call.from_user
 
+    try:
+        await ensure_user(user.id, user.username, user.full_name)
+    except:
+        pass
+
     if await is_joined(bot, user.id):
-        await call.message.delete()
+
+        try:
+            await call.message.delete()
+        except:
+            pass
 
         idr, usd = await get_balance(user.id)
 
         await call.message.answer(
-            format_dash(user, idr, usd),
+            format_dashboard(user, idr, usd),
             reply_markup=dashboard_kb()
         )
+
     else:
-        await call.answer("❌ Belum join", show_alert=True)
+        await call.answer("❌ Kamu belum join semua channel/group", show_alert=True)
