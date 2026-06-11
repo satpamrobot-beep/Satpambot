@@ -1,150 +1,132 @@
+import asyncio
 from aiogram import Router, F
-from aiogram.types import CallbackQuery
+from aiogram.types import (
+    Message,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    CallbackQuery
+)
+from aiogram.filters import CommandStart
 
-from bot.services.wallet import get_balance
+from db.users import ensure_user, get_balance
+from bot.services.join import is_joined
 
 router = Router()
 
+ADMIN_IDS = [6847035364]
+
+CHANNEL_ID = -1003712587847
+GROUP_ID = -1003920865154
+
 
 # =========================
-# FORMAT TEXT
+# FORCE JOIN
 # =========================
-def account_text(user, idr, usd):
-    username = f"@{user.username}" if user.username else "-"
+def force_join_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📢 Channel", url="https://t.me/yourchannel")],
+        [InlineKeyboardButton(text="💬 Group", url="https://t.me/yourgroup")],
+        [InlineKeyboardButton(text="✅ Check", callback_data="check_join")]
+    ])
 
+
+# =========================
+# DASHBOARD
+# =========================
+def dashboard_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📤 UpFile", callback_data="upfile"),
+            InlineKeyboardButton(text="📥 GetFile", callback_data="getfile"),
+        ],
+        [
+            InlineKeyboardButton(text="👤 Account", callback_data="account"),
+            InlineKeyboardButton(text="💳 Withdraw", callback_data="withdraw"),
+        ],
+        [
+            InlineKeyboardButton(text="⚙️ Setting", callback_data="setting"),
+            InlineKeyboardButton(text="📊 Statistik", callback_data="statistik"),
+        ],
+        [
+            InlineKeyboardButton(text="❓ Help", callback_data="help"),
+            InlineKeyboardButton(text="ℹ️ About", callback_data="about"),
+        ],
+    ])
+
+
+# =========================
+# FORMAT
+# =========================
+def format_dashboard(user, idr, usd):
     return (
-        "👤 <b>ACCOUNT INFO</b>\n"
+        "🐧 <b>Bluebird Cede Earn</b>\n"
         "━━━━━━━━━━━━━━\n"
-        f"🆔 ID      : <code>{user.id}</code>\n"
-        f"📛 Name    : {user.full_name}\n"
-        f"👤 Username: {username}\n"
-        "━━━━━━━━━━━━━━\n"
-        f"💰 Balance : Rp {idr:,} / ${usd}\n"
+        f"👤 ID: <code>{user.id}</code>\n"
+        f"📛 Name: {user.full_name}\n"
+        f"💰 Wallet: Rp {idr:,} / ${usd}\n"
         "━━━━━━━━━━━━━━"
     )
 
 
-def page_text(title: str):
-    return (
-        f"{title}\n"
-        "━━━━━━━━━━━━━━\n"
-        "🚧 Coming soon..."
-    )
-
-
 # =========================
-# SAFE EDIT FUNCTION
+# START (FAST + SAFE)
 # =========================
-async def safe_edit(call: CallbackQuery, text: str, kb):
-    try:
-        await call.message.edit_text(text, reply_markup=kb)
-    except:
-        # fallback kalau edit gagal (Telegram limit / same text)
-        await call.message.answer(text, reply_markup=kb)
+@router.message(CommandStart())
+async def start(message: Message):
+    bot = message.bot
+    user = message.from_user
 
+    # ⚡ jangan pakai create_task (biar stabil)
+    await ensure_user(user.id, user.username, user.full_name)
 
-# =========================
-# ACCOUNT
-# =========================
-@router.callback_query(F.data == "account")
-async def account(call: CallbackQuery):
-    user = call.from_user
+    # ⚡ join check
+    if not await is_joined(bot, user.id):
+        await message.answer("⚠️ Join dulu", reply_markup=force_join_kb())
+        return
+
     idr, usd = await get_balance(user.id)
 
-    await safe_edit(
-        call,
-        account_text(user, idr, usd),
-        call.message.reply_markup
+    await message.answer(
+        format_dashboard(user, idr, usd),
+        reply_markup=dashboard_kb()
     )
-    await call.answer()
+
+    # =========================
+    # ADMIN PANEL BUTTON
+    # =========================
+    if user.id in ADMIN_IDS:
+        await message.answer(
+            "👑 Admin detected",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="Open Admin Panel",
+                    callback_data="admin_panel"
+                )]
+            ])
+        )
 
 
 # =========================
-# WITHDRAW
+# CHECK JOIN
 # =========================
-@router.callback_query(F.data == "withdraw")
-async def withdraw(call: CallbackQuery):
-    await safe_edit(
-        call,
-        page_text("💳 WITHDRAW SYSTEM"),
-        call.message.reply_markup
-    )
-    await call.answer()
+@router.callback_query(F.data == "check_join")
+async def check_join(call: CallbackQuery):
+    bot = call.bot
+    user = call.from_user
 
+    await ensure_user(user.id, user.username, user.full_name)
 
-# =========================
-# UPFILE
-# =========================
-@router.callback_query(F.data == "upfile")
-async def upfile(call: CallbackQuery):
-    await safe_edit(
-        call,
-        page_text("📤 UPFILE SYSTEM"),
-        call.message.reply_markup
-    )
-    await call.answer()
+    if await is_joined(bot, user.id):
+        try:
+            await call.message.delete()
+        except:
+            pass
 
+        idr, usd = await get_balance(user.id)
 
-# =========================
-# GETFILE
-# =========================
-@router.callback_query(F.data == "getfile")
-async def getfile(call: CallbackQuery):
-    await safe_edit(
-        call,
-        page_text("📥 GETFILE SYSTEM"),
-        call.message.reply_markup
-    )
-    await call.answer()
-
-
-# =========================
-# SETTING
-# =========================
-@router.callback_query(F.data == "setting")
-async def setting(call: CallbackQuery):
-    await safe_edit(
-        call,
-        page_text("⚙️ SETTINGS"),
-        call.message.reply_markup
-    )
-    await call.answer()
-
-
-# =========================
-# STATISTIK
-# =========================
-@router.callback_query(F.data == "statistik")
-async def statistik(call: CallbackQuery):
-    await safe_edit(
-        call,
-        page_text("📊 STATISTIK BOT"),
-        call.message.reply_markup
-    )
-    await call.answer()
-
-
-# =========================
-# HELP
-# =========================
-@router.callback_query(F.data == "help")
-async def help(call: CallbackQuery):
-    await safe_edit(
-        call,
-        page_text("❓ HELP CENTER"),
-        call.message.reply_markup
-    )
-    await call.answer()
-
-
-# =========================
-# ABOUT
-# =========================
-@router.callback_query(F.data == "about")
-async def about(call: CallbackQuery):
-    await safe_edit(
-        call,
-        "ℹ️ <b>ABOUT BOT</b>\n━━━━━━━━━━━━━━\nBluebird Earn System v1.0",
-        call.message.reply_markup
-    )
-    await call.answer()
+        await call.message.answer(
+            format_dashboard(user, idr, usd),
+            reply_markup=dashboard_kb()
+        )
+    else:
+        await call.answer("❌ Belum join", show_alert=True)
