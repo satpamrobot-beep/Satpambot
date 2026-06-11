@@ -1,18 +1,58 @@
-from db.pool import get_pool
+from supabase import create_client
+from config import SUPABASE_URL, SUPABASE_KEY
+
+supabase = create_client(
+    SUPABASE_URL,
+    SUPABASE_KEY
+)
 
 
-async def create_upload(code, owner_id, access_type, price, visibility):
-    pool = get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute("""
-            INSERT INTO uploads (code, owner_id, access_type, price, visibility)
-            VALUES ($1, $2, $3, $4, $5)
-        """, code, owner_id, access_type, price, visibility)
+# =========================
+# CREATE UPLOAD
+# =========================
+async def create_upload(
+    code,
+    owner_id,
+    access_type="free",
+    price=0,
+    visibility="public"
+):
+    try:
+        return (
+            supabase.table("uploads")
+            .insert({
+                "code": code,
+                "owner_id": owner_id,
+                "access_type": access_type,
+                "price": price,
+                "visibility": visibility
+            })
+            .execute()
+        )
+
+    except Exception as e:
+        print("[create_upload error]", e)
+        return None
 
 
+# =========================
+# GET UPLOAD
+# =========================
 async def get_upload(code):
-    pool = get_pool()
-    async with pool.acquire() as conn:
-        return await conn.fetchrow("""
-            SELECT * FROM uploads WHERE code = $1
-        """, code)
+    try:
+        res = (
+            supabase.table("uploads")
+            .select("*")
+            .eq("code", code)
+            .limit(1)
+            .execute()
+        )
+
+        if not res.data:
+            return None
+
+        return res.data[0]
+
+    except Exception as e:
+        print("[get_upload error]", e)
+        return None
