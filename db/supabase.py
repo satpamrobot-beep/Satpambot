@@ -1,4 +1,4 @@
 from supabase import create_client
-from config import DATABASE_URL, CHANNEL_DB
+from config import SUPABASE_URL, SUPABASE_KEY
 
-supabase = create_client(DATABASE_URL, CHANNEL_DB)
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
