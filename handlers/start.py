@@ -69,19 +69,21 @@ def dashboard_kb():
 # =========================
 # DASHBOARD TEXT
 # =========================
-def dashboard_text(user, balance: int):
+def dashboard_text(user, balance_rp: int):
     username = f"@{user.username}" if user.username else "-"
+    usd = balance_rp / 16000
 
     return (
-        "💰 <b>Earn File Bot 🤖</b>\n"
-        "━━━━━━━━━━━━━━\n"
+        "┏━━━━━━━━━━━━━━━━━━━━┓\n"
+        "┃ 💰 <b>EARN FILE BOT</b> 🤖 ┃\n"
+        "┗━━━━━━━━━━━━━━━━━━━━┛\n\n"
         f"🆔 ID : <code>{user.id}</code>\n"
         f"👤 Username : {username}\n"
-        f"💰 Balance : Rp {balance:,}\n"
-        "━━━━━━━━━━━━━━"
+        f"💰 Balance : Rp {balance_rp:,.0f} / $ {usd:,.2f}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "⚡ Upload • Share • Earn\n"
+        "━━━━━━━━━━━━━━━━━━━━"
     )
-
-
 # =========================
 # START COMMAND
 # =========================
