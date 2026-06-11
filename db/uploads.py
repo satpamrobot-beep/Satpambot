@@ -1,58 +1,90 @@
-from supabase import create_client
-from config import SUPABASE_URL, SUPABASE_KEY
-
-supabase = create_client(
-    SUPABASE_URL,
-    SUPABASE_KEY
-)
+from db.pool import get_pool
 
 
 # =========================
 # CREATE UPLOAD
 # =========================
 async def create_upload(
-    code,
-    owner_id,
-    access_type="free",
-    price=0,
-    visibility="public"
+    code: str,
+    owner_id: int,
+    access_type: str = "free",
+    price: int = 0,
+    visibility: str = "public"
 ):
     try:
-        return (
-            supabase.table("uploads")
-            .insert({
-                "code": code,
-                "owner_id": owner_id,
-                "access_type": access_type,
-                "price": price,
-                "visibility": visibility
-            })
-            .execute()
-        )
+        pool = get_pool()
+
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO uploads (
+                    code,
+                    owner_id,
+                    access_type,
+                    price,
+                    visibility
+                )
+                VALUES ($1, $2, $3, $4, $5)
+                """,
+                code,
+                owner_id,
+                access_type,
+                price,
+                visibility
+            )
+
+        return True
 
     except Exception as e:
         print("[create_upload error]", e)
-        return None
+        return False
 
 
 # =========================
 # GET UPLOAD
 # =========================
-async def get_upload(code):
+async def get_upload(code: str):
     try:
-        res = (
-            supabase.table("uploads")
-            .select("*")
-            .eq("code", code)
-            .limit(1)
-            .execute()
-        )
+        pool = get_pool()
 
-        if not res.data:
-            return None
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT *
+                FROM uploads
+                WHERE code = $1
+                LIMIT 1
+                """,
+                code
+            )
 
-        return res.data[0]
+        return dict(row) if row else None
 
     except Exception as e:
         print("[get_upload error]", e)
         return None
+
+
+# =========================
+# CHECK UPLOAD EXISTS
+# =========================
+async def upload_exists(code: str) -> bool:
+    try:
+        pool = get_pool()
+
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT 1
+                FROM uploads
+                WHERE code = $1
+                LIMIT 1
+                """,
+                code
+            )
+
+        return row is not None
+
+    except Exception as e:
+        print("[upload_exists error]", e)
+        return False
