@@ -1,21 +1,17 @@
 import json
 from aiogram import Router, F
 from aiogram.types import Message, InputMediaPhoto, InputMediaVideo
-
 from db.pool import DB
 
 router = Router()
 
-# ================= SEND MEDIA =================
 
+# ================= SEND MEDIA =================
 async def send_media(message: Message, media, protect: bool = False):
     group = []
 
     for m in media:
-        try:
-            tipe, file_id, _ = m
-        except:
-            continue
+        tipe, file_id, _ = m
 
         if tipe == "photo":
             group.append(InputMediaPhoto(media=file_id))
@@ -30,34 +26,26 @@ async def send_media(message: Message, media, protect: bool = False):
             )
             continue
 
-        # kirim batch max 10
         if len(group) == 10:
-            try:
-                await message.answer_media_group(group)
-            except:
-                pass
+            await message.answer_media_group(group)
             group = []
 
     if group:
-        try:
-            await message.answer_media_group(group)
-        except:
-            pass
+        await message.answer_media_group(group)
 
 
-# ================= GET FILE =================
+# ================= GET FILE (PAKAI CODE TEXT) =================
+@router.message(F.text)
+async def getfile_by_code(message: Message):
+    text = message.text.strip()
 
-@router.message(F.text.startswith("/start"))
-async def get_file(message: Message):
-    args = message.text.split()
+    # ❌ skip command lain
+    if text.startswith("/"):
+        return
 
-    # /start biasa
-    if len(args) < 2:
-        return await message.answer("👋 Welcome")
+    code = text.upper()
 
-    code = args[1]
-
-    # ================= AMBIL DATA =================
+    # ambil DB
     row = await DB.fetchrow("""
         SELECT code, media, is_paid, price, is_public, protect
         FROM uploads
@@ -65,9 +53,9 @@ async def get_file(message: Message):
     """, code)
 
     if not row:
-        return await message.answer("❌ Code tidak ditemukan")
+        return  # diam saja biar gak spam “code tidak valid”
 
-    # ================= PAID SYSTEM =================
+    # 💰 paid file
     if row["is_paid"]:
         return await message.answer(
             f"💰 FILE BERBAYAR\n\n"
@@ -75,25 +63,16 @@ async def get_file(message: Message):
             f"Ketik:\n/pay {code}"
         )
 
-    # ================= CEK MEDIA =================
-    if not row["media"]:
-        return await message.answer("❌ File kosong")
-
-    # ================= DECODE MEDIA (FIX PENTING) =================
+    # 🔥 parse media
     try:
         media = json.loads(row["media"])
     except:
-        media = row["media"]
+        return await message.answer("❌ File rusak")
 
-    if not isinstance(media, list):
-        return await message.answer("❌ Format media rusak")
+    protect = row["protect"]
 
-    # ================= PROTECT MODE =================
-    protect = bool(row["protect"])
-
-    # ================= SEND MEDIA =================
     await send_media(
-        message=message,
-        media=media,
+        message,
+        media,
         protect=protect
     )
