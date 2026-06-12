@@ -15,38 +15,43 @@ GROUP = "https://t.me/+DTL9cOR34ipmM2U1"
 
 
 # =========================
-# DASHBOARD UI
+# COPYRIGHT (SMALL STYLE)
+# =========================
+def copyright_text():
+    return "━━━━━━━━━━━━━━\n<i>© 2026 EarnFileBot Telegram</i>"
+
+
+# =========================
+# DASHBOARD (WITH COPYRIGHT)
 # =========================
 def dashboard_text(user, balance_rp: int):
     username = f"@{user.username}" if user.username else "Hidden"
     usd = balance_rp / 16000
 
     return (
-        "╭━━━━━━━━━━━━━━━━━━╮\n"
-        "┃ 💰 <b>EARN FILE BOT</b> ┃\n"
-        "╰━━━━━━━━━━━━━━━━━━╯\n\n"
-        f"👤 User : {username}\n"
-        f"🆔 ID   : <code>{user.id}</code>\n"
-        f"💳 Balance : Rp {balance_rp:,.0f} • $ {usd:.2f}\n\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "🚀 Upload • Share • Earn"
+        "💠 <b>EarnFile</b>\n"
+        "────────────\n\n"
+        f"👤 {username}\n"
+        f"🆔 <code>{user.id}</code>\n\n"
+        f"💰 Rp {balance_rp:,.0f} | $ {usd:.2f}\n\n"
+        f"{copyright_text()}"
     )
 
 
 # =========================
-# HOME BUTTON
+# CLEAN HOME BUTTON
 # =========================
 def home_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="📤 Upload", callback_data="upload"),
-            InlineKeyboardButton(text="🔎 Buka Code", callback_data="open_code")
+            InlineKeyboardButton(text="🔑 Code", callback_data="open_code")
         ],
         [
-            InlineKeyboardButton(text="🧾 My Account", callback_data="account")
+            InlineKeyboardButton(text="👤 Account", callback_data="account"),
+            InlineKeyboardButton(text="📦 Product", callback_data="my_product")
         ],
         [
-            InlineKeyboardButton(text="📦 Produk", callback_data="my_product"),
             InlineKeyboardButton(text="⚙️ Setting", callback_data="setting")
         ],
         [
@@ -62,13 +67,13 @@ def home_kb():
 def join_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="📢 Join Channel", url=f"https://t.me/{CHANNEL.replace('@','')}")
+            InlineKeyboardButton(text="Join Channel", url=CHANNEL)
         ],
         [
-            InlineKeyboardButton(text="👥 Join Group", url=f"https://t.me/{GROUP.replace('@','')}")
+            InlineKeyboardButton(text="Join Group", url=GROUP)
         ],
         [
-            InlineKeyboardButton(text="🔄 Cek Join", callback_data="cek_join")
+            InlineKeyboardButton(text="Check Join", callback_data="cek_join")
         ]
     ])
 
@@ -85,7 +90,7 @@ async def check_join(bot, user_id: int, chat: str):
 
 
 # =========================
-# SAVE USER (AUTO)
+# SAVE USER
 # =========================
 async def save_user(user):
     pool = get_pool()
@@ -104,21 +109,18 @@ async def save_user(user):
 async def start(message: Message, bot):
     user = message.from_user
 
-    # SAVE USER FOR BROADCAST
     await save_user(user)
 
-    # FORCE JOIN CHECK (ANTI BYPASS)
     ch = await check_join(bot, user.id, CHANNEL)
     gp = await check_join(bot, user.id, GROUP)
 
     if not ch or not gp:
         await message.answer(
-            "⚠️ Kamu harus join channel & group untuk menggunakan bot:",
+            "⚠️ Please join to continue",
             reply_markup=join_kb()
         )
         return
 
-    # BALANCE DEFAULT (NANTI CONNECT DB)
     balance = 0
 
     await message.answer(
@@ -129,7 +131,7 @@ async def start(message: Message, bot):
 
 
 # =========================
-# CEK JOIN BUTTON
+# CHECK JOIN
 # =========================
 @router.callback_query(F.data == "cek_join")
 async def cek_join(callback: CallbackQuery, bot):
@@ -140,11 +142,12 @@ async def cek_join(callback: CallbackQuery, bot):
 
     if ch and gp:
         await callback.message.edit_text(
-            "✅ Join berhasil!\n\nMasuk ke bot...",
-            reply_markup=home_kb()
+            dashboard_text(callback.from_user, 0),
+            reply_markup=home_kb(),
+            parse_mode="HTML"
         )
     else:
-        await callback.answer("❌ Kamu belum join semua", show_alert=True)
+        await callback.answer("❌ Not joined yet", show_alert=True)
 
 
 # =========================
@@ -154,7 +157,7 @@ async def cek_join(callback: CallbackQuery, bot):
 async def home(callback: CallbackQuery):
     user = callback.from_user
 
-    balance = 0  # nanti dari DB / webhook
+    balance = 0
 
     await callback.message.edit_text(
         dashboard_text(user, balance),
