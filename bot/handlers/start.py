@@ -8,7 +8,33 @@ router = Router()
 
 
 # =========================
-# KEYBOARD HOME
+# CONFIG
+# =========================
+CHANNEL = "@your_channel"
+GROUP = "@your_group"
+
+
+# =========================
+# DASHBOARD UI
+# =========================
+def dashboard_text(user, balance_rp: int):
+    username = f"@{user.username}" if user.username else "Hidden"
+    usd = balance_rp / 16000
+
+    return (
+        "╭━━━━━━━━━━━━━━━━━━╮\n"
+        "┃ 💰 <b>EARN FILE BOT</b> ┃\n"
+        "╰━━━━━━━━━━━━━━━━━━╯\n\n"
+        f"👤 User : {username}\n"
+        f"🆔 ID   : <code>{user.id}</code>\n"
+        f"💳 Balance : Rp {balance_rp:,.0f} • $ {usd:.2f}\n\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "🚀 Upload • Share • Earn"
+    )
+
+
+# =========================
+# HOME BUTTON
 # =========================
 def home_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -17,8 +43,11 @@ def home_kb():
             InlineKeyboardButton(text="🔎 Buka Code", callback_data="open_code")
         ],
         [
-            InlineKeyboardButton(text="📦 Produk Saya", callback_data="my_product"),
-            InlineKeyboardButton(text="💰 Saldo", callback_data="balance")
+            InlineKeyboardButton(text="🧾 My Account", callback_data="account")
+        ],
+        [
+            InlineKeyboardButton(text="📦 Produk", callback_data="my_product"),
+            InlineKeyboardButton(text="⚙️ Setting", callback_data="setting")
         ],
         [
             InlineKeyboardButton(text="❓ Help", callback_data="help"),
@@ -28,27 +57,38 @@ def home_kb():
 
 
 # =========================
-# FORCE SUB (SIMPLE CHECK)
+# JOIN PANEL
 # =========================
-async def check_join(bot, user_id: int, channel_id: str):
+def join_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📢 Join Channel", url=f"https://t.me/{CHANNEL.replace('@','')}")
+        ],
+        [
+            InlineKeyboardButton(text="👥 Join Group", url=f"https://t.me/{GROUP.replace('@','')}")
+        ],
+        [
+            InlineKeyboardButton(text="🔄 Cek Join", callback_data="cek_join")
+        ]
+    ])
+
+
+# =========================
+# CHECK JOIN
+# =========================
+async def check_join(bot, user_id: int, chat: str):
     try:
-        member = await bot.get_chat_member(channel_id, user_id)
+        member = await bot.get_chat_member(chat, user_id)
         return member.status in ("member", "administrator", "creator")
     except:
         return False
 
 
 # =========================
-# /START
+# SAVE USER (AUTO)
 # =========================
-@router.message(CommandStart())
-async def start(message: Message, bot):
-    user = message.from_user
+async def save_user(user):
     pool = get_pool()
-
-    # =====================
-    # AUTO REGISTER USER
-    # =====================
     async with pool.acquire() as conn:
         await conn.execute("""
             INSERT INTO users (user_id, username)
@@ -56,78 +96,69 @@ async def start(message: Message, bot):
             ON CONFLICT (user_id) DO NOTHING
         """, user.id, user.username)
 
-    # =====================
-    # FORCE SUB CHECK
-    # =====================
-    CHANNEL = "@your_channel"
-    GROUP = "@your_group"
 
-    try:
-        ch = await check_join(bot, user.id, CHANNEL)
-        gp = await check_join(bot, user.id, GROUP)
+# =========================
+# START
+# =========================
+@router.message(CommandStart())
+async def start(message: Message, bot):
+    user = message.from_user
 
-        if not ch or not gp:
-            await message.answer(
-                "⚠️ Kamu harus join channel & group dulu sebelum menggunakan bot."
-            )
-            return
-    except:
-        pass
+    # SAVE USER FOR BROADCAST
+    await save_user(user)
 
-    # =====================
-    # SHOW HOME
-    # =====================
+    # FORCE JOIN CHECK (ANTI BYPASS)
+    ch = await check_join(bot, user.id, CHANNEL)
+    gp = await check_join(bot, user.id, GROUP)
+
+    if not ch or not gp:
+        await message.answer(
+            "⚠️ Kamu harus join channel & group untuk menggunakan bot:",
+            reply_markup=join_kb()
+        )
+        return
+
+    # BALANCE DEFAULT (NANTI CONNECT DB)
+    balance = 0
+
     await message.answer(
-        "🤖 <b>EarnFile Bot</b>\nUpload • Sell • Earn",
+        dashboard_text(user, balance),
         reply_markup=home_kb(),
         parse_mode="HTML"
     )
 
 
 # =========================
-# HOME BUTTON (REFRESH)
+# CEK JOIN BUTTON
+# =========================
+@router.callback_query(F.data == "cek_join")
+async def cek_join(callback: CallbackQuery, bot):
+    user_id = callback.from_user.id
+
+    ch = await check_join(bot, user_id, CHANNEL)
+    gp = await check_join(bot, user_id, GROUP)
+
+    if ch and gp:
+        await callback.message.edit_text(
+            "✅ Join berhasil!\n\nMasuk ke bot...",
+            reply_markup=home_kb()
+        )
+    else:
+        await callback.answer("❌ Kamu belum join semua", show_alert=True)
+
+
+# =========================
+# HOME REFRESH
 # =========================
 @router.callback_query(F.data == "home")
 async def home(callback: CallbackQuery):
+    user = callback.from_user
+
+    balance = 0  # nanti dari DB / webhook
+
     await callback.message.edit_text(
-        "🤖 <b>EarnFile Bot</b>\nUpload • Sell • Earn",
+        dashboard_text(user, balance),
         reply_markup=home_kb(),
-        parse_mode="HTML"
-    )
-    await callback.answer()
-
-
-# =========================
-# HELP
-# =========================
-@router.callback_query(F.data == "help")
-async def help_menu(callback: CallbackQuery):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📌 Cara Upload", callback_data="help_upload")],
-        [InlineKeyboardButton(text="📌 Cara Get File", callback_data="help_getfile")],
-        [InlineKeyboardButton(text="📌 Cara Cuan", callback_data="help_earn")],
-        [InlineKeyboardButton(text="📌 Withdraw", callback_data="help_wd")],
-        [InlineKeyboardButton(text="⬅️ Back", callback_data="home")]
-    ])
-
-    await callback.message.edit_text(
-        "❓ <b>Help Center</b>\nPilih menu bantuan:",
-        reply_markup=kb,
-        parse_mode="HTML"
-    )
-    await callback.answer()
-
-
-# =========================
-# ABOUT
-# =========================
-@router.callback_query(F.data == "about")
-async def about(callback: CallbackQuery):
-    await callback.message.edit_text(
-        "ℹ️ <b>About EarnFile</b>\n\nUpload • Sell • Earn\nMarketplace file & media system.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Back", callback_data="home")]
-        ]),
         parse_mode="HTML"
     )
     await callback.answer()
