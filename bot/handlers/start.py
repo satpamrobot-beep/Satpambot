@@ -1,6 +1,7 @@
 import asyncio
+import time
 
-from aiogram import Router, F
+from aiogram import Router
 from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -14,6 +15,9 @@ router = Router()
 # =========================
 CHANNEL = -1003777107004
 GROUP = -1003721009353
+
+CACHE = {}
+CACHE_TTL = 10  # fast cache
 
 
 # =========================
@@ -35,7 +39,7 @@ def dashboard_text(user, balance: int):
 
 
 # =========================
-# HOME KEYBOARD (CLEAN)
+# HOME BUTTON
 # =========================
 def home_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -58,18 +62,7 @@ def home_kb():
 
 
 # =========================
-# JOIN KEYBOARD
-# =========================
-def join_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📢 Join Channel", url="https://t.me/your_channel")],
-        [InlineKeyboardButton(text="👥 Join Group", url="https://t.me/your_group")],
-        [InlineKeyboardButton(text="🔄 Verify", callback_data="cek_join")]
-    ])
-
-
-# =========================
-# CHECK JOIN (ANTI BYPASS CORE)
+# JOIN CHECK (FAST SAFE)
 # =========================
 async def check_join(bot, user_id: int, chat: int) -> bool:
     try:
@@ -80,7 +73,7 @@ async def check_join(bot, user_id: int, chat: int) -> bool:
 
 
 # =========================
-# FORCE VERIFY (PARALLEL FAST)
+# FORCE VERIFY (ANTI BYPASS MAX)
 # =========================
 async def force_verify(bot, user_id: int) -> bool:
     ch, gp = await asyncio.gather(
@@ -107,35 +100,50 @@ async def save_user(user):
 
 
 # =========================
-# GET BALANCE (REALTIME SAFE)
+# GET BALANCE (CACHE + DB SAFE)
 # =========================
 async def get_balance(user_id: int):
+    now = time.time()
+
+    if user_id in CACHE:
+        bal, ts = CACHE[user_id]
+        if now - ts < CACHE_TTL:
+            return bal
+
     try:
         pool = get_pool()
         async with pool.acquire() as conn:
-            return await conn.fetchval(
-                "SELECT balance FROM users WHERE user_id=$1",
+            bal = await conn.fetchval(
+                "SELECT COALESCE(balance,0) FROM users WHERE user_id=$1",
                 user_id
-            ) or 0
+            )
+
+        CACHE[user_id] = (bal, now)
+        return bal
+
     except:
         return 0
 
 
 # =========================
-# START (MAX PERFORMANCE CORE)
+# START (MAX SPEED CORE)
 # =========================
 @router.message(CommandStart())
 async def start(message: Message, bot):
     user = message.from_user
 
-    # background save (NO DELAY)
+    # non-blocking save (NO DELAY)
     asyncio.create_task(save_user(user))
 
-    # FORCE JOIN CHECK (ANTI BYPASS MAX)
+    # FORCE JOIN CHECK
     if not await force_verify(bot, user.id):
         await message.answer(
             "⚠️ Kamu wajib join channel & group dulu",
-            reply_markup=join_kb()
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📢 Join Channel", url="https://t.me/your_channel")],
+                [InlineKeyboardButton(text="👥 Join Group", url="https://t.me/your_group")],
+                [InlineKeyboardButton(text="🔄 Cek Join", callback_data="cek_join")]
+            ])
         )
         return
 
