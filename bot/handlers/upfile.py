@@ -4,6 +4,7 @@ import re
 import secrets
 import string
 from db.pool import DB
+import json
 
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -223,6 +224,8 @@ async def save(call: CallbackQuery, state: FSMContext):
     code = gen_code()
     link = f"https://t.me/Decodefilebot?start={code}"
 
+    media_json = json.dumps(data.get("media", []))  # 🔥 FIX DI SINI
+
     try:
         await DB.execute("""
             INSERT INTO uploads 
@@ -234,8 +237,8 @@ async def save(call: CallbackQuery, state: FSMContext):
             data.get("is_paid"),
             data.get("price"),
             data.get("public"),
-            data.get("media"),
-            not data.get("public")  # 🔐 AUTO PROTECT
+            media_json,  # 🔥 PAKAI JSON STRING
+            not data.get("public")
         )
 
     except Exception as e:
