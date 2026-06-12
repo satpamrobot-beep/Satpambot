@@ -1,25 +1,33 @@
 import asyncio
-import os
-from aiogram import Bot, Dispatcher, Router
-from aiogram.filters import CommandStart
-from aiogram.types import Message
-from dotenv import load_dotenv
+from aiogram import Bot, Dispatcher
+from bot.loader import bot, dp
 
-load_dotenv()
+from bot.db.database import connect_db, close_db
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+# import router semua handler (nanti kamu tambah satu-satu)
+from bot.handlers import start
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
-router = Router()
-
-@router.message(CommandStart())
-async def start(message: Message):
-    await message.answer("🤖 EarnFile Bot Online")
 
 async def main():
-    dp.include_router(router)
+    # 🔥 CONNECT DATABASE DULU
+    await connect_db()
+
+    # 🔥 REGISTER ROUTER
+    dp.include_router(start.router)
+
+    print("🤖 EarnFile Bot Running...")
+
+    # 🔥 START BOT
     await dp.start_polling(bot)
 
+
+# optional cleanup
+async def on_shutdown():
+    await close_db()
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Bot stopped")
