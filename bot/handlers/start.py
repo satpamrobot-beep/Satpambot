@@ -15,14 +15,14 @@ GROUP = -1003721009353
 
 
 # =========================
-# COPYRIGHT (SMALL STYLE)
+# COPYRIGHT
 # =========================
 def copyright_text():
     return "━━━━━━━━━━━━━━\n<i>© 2026 EarnFileBot Telegram</i>"
 
 
 # =========================
-# DASHBOARD (WITH COPYRIGHT)
+# DASHBOARD
 # =========================
 def dashboard_text(user, balance_rp: int):
     username = f"@{user.username}" if user.username else "Hidden"
@@ -39,7 +39,7 @@ def dashboard_text(user, balance_rp: int):
 
 
 # =========================
-# CLEAN HOME BUTTON
+# HOME BUTTON
 # =========================
 def home_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -62,30 +62,32 @@ def home_kb():
 
 
 # =========================
-# JOIN PANEL
+# JOIN BUTTON
 # =========================
 def join_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="Join Channel", url=CHANNEL)
-        ],
-        [
-            InlineKeyboardButton(text="Join Group", url=GROUP)
-        ],
-        [
-            InlineKeyboardButton(text="Check Join", callback_data="cek_join")
-        ]
+        [InlineKeyboardButton(text="Join Channel", url=f"https://t.me/c/{str(CHANNEL)[4:]}")],
+        [InlineKeyboardButton(text="Join Group", url=f"https://t.me/c/{str(GROUP)[4:]}")],
+        [InlineKeyboardButton(text="Check Join", callback_data="cek_join")]
     ])
 
 
 # =========================
-# CHECK JOIN
+# CHECK JOIN (FIXED)
 # =========================
-async def check_join(bot, user_id: int, chat: str):
+async def check_join(bot, user_id: int, chat: int) -> bool:
     try:
-        member = await bot.get_chat_member(chat, user_id)
-        return member.status in ("member", "administrator", "creator")
-    except:
+        member = await bot.get_chat_member(chat_id=chat, user_id=user_id)
+
+        return member.status in (
+            "member",
+            "administrator",
+            "creator",
+            "restricted"
+        )
+
+    except Exception as e:
+        print(f"[JOIN ERROR] chat={chat} user={user_id} -> {e}")
         return False
 
 
@@ -94,6 +96,7 @@ async def check_join(bot, user_id: int, chat: str):
 # =========================
 async def save_user(user):
     pool = get_pool()
+
     async with pool.acquire() as conn:
         await conn.execute("""
             INSERT INTO users (user_id, username)
@@ -131,7 +134,7 @@ async def start(message: Message, bot):
 
 
 # =========================
-# CHECK JOIN
+# CHECK JOIN CALLBACK
 # =========================
 @router.callback_query(F.data == "cek_join")
 async def cek_join(callback: CallbackQuery, bot):
@@ -151,7 +154,7 @@ async def cek_join(callback: CallbackQuery, bot):
 
 
 # =========================
-# HOME REFRESH
+# HOME
 # =========================
 @router.callback_query(F.data == "home")
 async def home(callback: CallbackQuery):
