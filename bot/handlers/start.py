@@ -27,19 +27,13 @@ def copyright_text():
 # DASHBOARD
 # =========================
 def dashboard_text(user, balance_rp: int):
-    username = f"@{user.username}" if user.username else "Hidden"
-    usd = balance_rp / 16000
-
     return (
-        "💠 <b>EarnFile</b>\n"
-        "────────────\n\n"
-        f"👤 {username}\n"
-        f"🆔 <code>{user.id}</code>\n\n"
-        f"💰 Rp {balance_rp:,.0f} | $ {usd:.2f}\n\n"
+        "📦 <b>EarnFileBot - File Sharing Platform</b>\n\n"
+        f"🆔 <b>ID Akun:</b> <code>{user.id}</code>\n"
+        f"💰 <b>Total Saldo:</b> Rp {balance_rp:,.0f}\n"
+        f"👥 <b>Mengundang:</b> 0 users\n\n"
         f"{copyright_text()}"
     )
-
-
 # =========================
 # HOME BUTTON
 # =========================
