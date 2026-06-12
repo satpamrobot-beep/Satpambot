@@ -3,7 +3,7 @@ import time
 import re
 import secrets
 import string
-from db import DB
+from db.pool import DB
 
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
