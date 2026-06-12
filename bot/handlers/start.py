@@ -29,11 +29,13 @@ def copyright_text():
 def dashboard_text(user, balance_rp: int):
     return (
         "📦 <b>EarnFileBot - File Sharing Platform</b>\n\n"
-        f"🆔 <b>ID Akun:</b> <code>{user.id}</code>\n"
-        f"💰 <b>Total Saldo:</b> Rp {balance_rp:,.0f}\n"
-        f"👥 <b>Mengundang:</b> 0 users\n\n"
+        f"🆔 <b>ID:</b> <code>{user.id}</code>\n"
+        f"💰 <b>Saldo:</b> Rp {balance_rp:,.0f}\n"
+        f"👥 <b>Referral:</b> 0\n\n"
         f"{copyright_text()}"
     )
+
+
 # =========================
 # HOME BUTTON
 # =========================
@@ -69,77 +71,78 @@ def join_kb():
 
 
 # =========================
-# CHECK JOIN (ANTI BYPASS CORE)
+# CHECK JOIN (FIXED SAFE)
 # =========================
 async def check_join(bot, user_id: int, chat: int) -> bool:
     try:
         member = await bot.get_chat_member(chat_id=chat, user_id=user_id)
-
-        return member.status in (
-            "member",
-            "administrator",
-            "creator",
-            "restricted"
-        )
-
-    except Exception as e:
-        print(f"[JOIN ERROR] chat={chat} user={user_id} -> {e}")
+        return member.status in ("member", "administrator", "creator", "restricted")
+    except:
         return False
 
 
 # =========================
-# FORCE VERIFY (ANTI BYPASS LAYER)
+# FORCE VERIFY (FAST PARALLEL)
 # =========================
 async def force_verify(bot, user_id: int) -> bool:
-    ch = await check_join(bot, user_id, CHANNEL)
-    gp = await check_join(bot, user_id, GROUP)
+    ch_task = check_join(bot, user_id, CHANNEL)
+    gp_task = check_join(bot, user_id, GROUP)
+    ch, gp = await asyncio.gather(ch_task, gp_task)
     return ch and gp
 
 
 # =========================
-# SAVE USER (NON-BLOCKING)
+# SAVE USER (NON BLOCKING)
 # =========================
 async def save_user(user):
-    pool = get_pool()
-
-    async with pool.acquire() as conn:
-        await conn.execute("""
-            INSERT INTO users (user_id, username)
-            VALUES ($1, $2)
-            ON CONFLICT (user_id) DO NOTHING
-        """, user.id, user.username)
+    try:
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO users (user_id, username)
+                VALUES ($1, $2)
+                ON CONFLICT (user_id) DO NOTHING
+            """, user.id, user.username)
+    except:
+        pass
 
 
 # =========================
-# START (FAST + BALANCE + FORCE JOIN)
+# GET BALANCE SAFE
+# =========================
+async def get_balance(user_id: int):
+    try:
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            bal = await conn.fetchval(
+                "SELECT balance FROM users WHERE user_id=$1",
+                user_id
+            )
+            return bal or 0
+    except:
+        return 0
+
+
+# =========================
+# START (FAST VERSION)
 # =========================
 @router.message(CommandStart())
 async def start(message: Message, bot):
     user = message.from_user
 
-    # async save biar tidak delay
+    # save async (biar tidak delay)
     asyncio.create_task(save_user(user))
 
-    # force join check (ANTI BYPASS)
+    # force join check
     if not await force_verify(bot, user.id):
         await message.answer(
-            "⚠️ You must join channel & group first",
+            "⚠️ Wajib join channel & group dulu",
             reply_markup=join_kb()
         )
         return
 
-    # ambil balance dari DB
-    pool = get_pool()
-    async with pool.acquire() as conn:
-        balance = await conn.fetchval(
-            "SELECT balance FROM users WHERE user_id=$1",
-            user.id
-        )
+    balance = await get_balance(user.id)
 
-    if balance is None:
-        balance = 0
-
-    # dashboard
     await message.answer(
         dashboard_text(user, balance),
         reply_markup=home_kb(),
@@ -148,23 +151,14 @@ async def start(message: Message, bot):
 
 
 # =========================
-# CHECK JOIN CALLBACK
+# CHECK JOIN BUTTON
 # =========================
 @router.callback_query(F.data == "cek_join")
 async def cek_join(callback: CallbackQuery, bot):
     user_id = callback.from_user.id
 
     if await force_verify(bot, user_id):
-        pool = get_pool()
-
-        async with pool.acquire() as conn:
-            balance = await conn.fetchval(
-                "SELECT balance FROM users WHERE user_id=$1",
-                user_id
-            )
-
-        if balance is None:
-            balance = 0
+        balance = await get_balance(user_id)
 
         await callback.message.edit_text(
             dashboard_text(callback.from_user, balance),
@@ -172,26 +166,17 @@ async def cek_join(callback: CallbackQuery, bot):
             parse_mode="HTML"
         )
     else:
-        await callback.answer("❌ Not joined yet", show_alert=True)
+        await callback.answer("❌ Belum join semua", show_alert=True)
 
 
 # =========================
-# HOME REFRESH
+# HOME
 # =========================
 @router.callback_query(F.data == "home")
 async def home(callback: CallbackQuery):
     user = callback.from_user
 
-    pool = get_pool()
-
-    async with pool.acquire() as conn:
-        balance = await conn.fetchval(
-            "SELECT balance FROM users WHERE user_id=$1",
-            user.id
-        )
-
-    if balance is None:
-        balance = 0
+    balance = await get_balance(user.id)
 
     await callback.message.edit_text(
         dashboard_text(user, balance),
