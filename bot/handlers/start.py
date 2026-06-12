@@ -17,27 +17,25 @@ GROUP = -1003721009353
 
 
 # =========================
-# COPYRIGHT
+# UI DASHBOARD
 # =========================
-def copyright_text():
-    return "━━━━━━━━━━━━━━\n<i>© 2026 EarnFileBot Telegram</i>"
+def dashboard_text(user, balance: int):
+    username = f"@{user.username}" if user.username else "Hidden"
+    usd = balance / 16000
 
-
-# =========================
-# DASHBOARD
-# =========================
-def dashboard_text(user, balance_rp: int):
     return (
-        "📦 <b>EarnFileBot - File Sharing Platform</b>\n\n"
-        f"🆔 <b>ID:</b> <code>{user.id}</code>\n"
-        f"💰 <b>Saldo:</b> Rp {balance_rp:,.0f}\n"
-        f"👥 <b>Referral:</b> 0\n\n"
-        f"{copyright_text()}"
+        "💠 <b>EarnFile</b>\n"
+        "──────────────\n\n"
+        f"👤 {username}\n"
+        f"🆔 <code>{user.id}</code>\n\n"
+        f"💰 Rp {balance:,.0f} | $ {usd:.2f}\n\n"
+        "──────────────\n"
+        "<i>© 2026 EarnFileBot Telegram</i>"
     )
 
 
 # =========================
-# HOME BUTTON
+# HOME KEYBOARD (CLEAN)
 # =========================
 def home_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -50,28 +48,28 @@ def home_kb():
             InlineKeyboardButton(text="📦 Product", callback_data="my_product")
         ],
         [
-            InlineKeyboardButton(text="⚙️ Setting", callback_data="setting")
+            InlineKeyboardButton(text="⚙️ Setting", callback_data="setting"),
+            InlineKeyboardButton(text="❓ Help", callback_data="help")
         ],
         [
-            InlineKeyboardButton(text="❓ Help", callback_data="help"),
             InlineKeyboardButton(text="ℹ️ About", callback_data="about")
         ]
     ])
 
 
 # =========================
-# JOIN BUTTON
+# JOIN KEYBOARD
 # =========================
 def join_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📢 Join Channel", url="https://t.me/your_channel")],
         [InlineKeyboardButton(text="👥 Join Group", url="https://t.me/your_group")],
-        [InlineKeyboardButton(text="🔄 Check Join", callback_data="cek_join")]
+        [InlineKeyboardButton(text="🔄 Verify", callback_data="cek_join")]
     ])
 
 
 # =========================
-# CHECK JOIN (FIXED SAFE)
+# CHECK JOIN (ANTI BYPASS CORE)
 # =========================
 async def check_join(bot, user_id: int, chat: int) -> bool:
     try:
@@ -82,12 +80,13 @@ async def check_join(bot, user_id: int, chat: int) -> bool:
 
 
 # =========================
-# FORCE VERIFY (FAST PARALLEL)
+# FORCE VERIFY (PARALLEL FAST)
 # =========================
 async def force_verify(bot, user_id: int) -> bool:
-    ch_task = check_join(bot, user_id, CHANNEL)
-    gp_task = check_join(bot, user_id, GROUP)
-    ch, gp = await asyncio.gather(ch_task, gp_task)
+    ch, gp = await asyncio.gather(
+        check_join(bot, user_id, CHANNEL),
+        check_join(bot, user_id, GROUP)
+    )
     return ch and gp
 
 
@@ -108,39 +107,39 @@ async def save_user(user):
 
 
 # =========================
-# GET BALANCE SAFE
+# GET BALANCE (REALTIME SAFE)
 # =========================
 async def get_balance(user_id: int):
     try:
         pool = get_pool()
         async with pool.acquire() as conn:
-            bal = await conn.fetchval(
+            return await conn.fetchval(
                 "SELECT balance FROM users WHERE user_id=$1",
                 user_id
-            )
-            return bal or 0
+            ) or 0
     except:
         return 0
 
 
 # =========================
-# START (FAST VERSION)
+# START (MAX PERFORMANCE CORE)
 # =========================
 @router.message(CommandStart())
 async def start(message: Message, bot):
     user = message.from_user
 
-    # save async (biar tidak delay)
+    # background save (NO DELAY)
     asyncio.create_task(save_user(user))
 
-    # force join check
+    # FORCE JOIN CHECK (ANTI BYPASS MAX)
     if not await force_verify(bot, user.id):
         await message.answer(
-            "⚠️ Wajib join channel & group dulu",
+            "⚠️ Kamu wajib join channel & group dulu",
             reply_markup=join_kb()
         )
         return
 
+    # GET BALANCE FAST
     balance = await get_balance(user.id)
 
     await message.answer(
@@ -166,11 +165,11 @@ async def cek_join(callback: CallbackQuery, bot):
             parse_mode="HTML"
         )
     else:
-        await callback.answer("❌ Belum join semua", show_alert=True)
+        await callback.answer("❌ Kamu belum join semua", show_alert=True)
 
 
 # =========================
-# HOME
+# HOME REFRESH
 # =========================
 @router.callback_query(F.data == "home")
 async def home(callback: CallbackQuery):
