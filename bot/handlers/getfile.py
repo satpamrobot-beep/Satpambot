@@ -1,78 +1,87 @@
 import json
-from aiogram import Router, F
-from aiogram.types import Message, InputMediaPhoto, InputMediaVideo
-from db.pool import DB
+
+from aiogram import Router
+from aiogram.types import Message
+from aiogram.filters import CommandStart, CommandObject
+
+from db.pool import DB  # asumsi kamu pakai async DB (Supabase/Postgres)
 
 router = Router()
 
 
-# ================= SEND MEDIA =================
-async def send_media(message: Message, media, protect: bool = False):
-    group = []
+# =========================
+# START + GETFILE
+# =========================
+@router.message(CommandStart(deep_link=True))
+async def start(message: Message, command: CommandObject):
+    user = message.from_user
+    payload = command.args
 
-    for m in media:
-        tipe, file_id, _ = m
+    # =========================
+    # NORMAL START
+    # =========================
+    if not payload:
+        return await message.answer("📌 Dashboard bot kamu di sini")
 
-        if tipe == "photo":
-            group.append(InputMediaPhoto(media=file_id))
+    # =========================
+    # GETFILE MODE
+    # =========================
+    code = payload.replace("decodefilebot_", "")
 
-        elif tipe == "video":
-            group.append(InputMediaVideo(media=file_id))
+    # =========================
+    # AMBIL DATA DARI DATABASE
+    # =========================
+    row = await DB.fetchrow(
+        "SELECT * FROM uploads WHERE code = $1",
+        code
+    )
 
-        elif tipe == "doc":
-            await message.answer_document(
-                file_id,
-                protect_content=protect
-            )
-            continue
-
-        if len(group) == 10:
-            await message.answer_media_group(group)
-            group = []
-
-    if group:
-        await message.answer_media_group(group)
-
-
-# ================= GET FILE (PAKAI CODE TEXT) =================
-@router.message(F.text)
-async def getfile_by_code(message: Message):
-    text = message.text.strip()
-
-    # ❌ skip command lain
-    if text.startswith("/"):
-        return
-
-    code = text.upper()
-
-    # ambil DB
-    row = await DB.fetchrow("""
-        SELECT code, media, is_paid, price, is_public, protect
-        FROM uploads
-        WHERE code=$1
-    """, code)
-
+    # =========================
+    # FILE TIDAK DITEMUKAN
+    # =========================
     if not row:
-        return  # diam saja biar gak spam “code tidak valid”
-
-    # 💰 paid file
-    if row["is_paid"]:
         return await message.answer(
-            f"💰 FILE BERBAYAR\n\n"
-            f"Price: {row['price']}\n\n"
-            f"Ketik:\n/pay {code}"
+            "❌ FILE TIDAK DITEMUKAN\n\n"
+            f"🔑 CODE: {code}"
         )
 
-    # 🔥 parse media
-    try:
-        media = json.loads(row["media"])
-    except:
-        return await message.answer("❌ File rusak")
+    # =========================
+    # PARSE MEDIA
+    # =========================
+    media = row["media"]
 
-    protect = row["protect"]
+    if isinstance(media, str):
+        media = json.loads(media)
 
-    await send_media(
-        message,
-        media,
-        protect=protect
+    # =========================
+    # INFO FILE
+    # =========================
+    await message.answer(
+        "📥 FILE FOUND\n\n"
+        f"🔑 CODE: {code}\n"
+        f"💰 TYPE: {'PAID' if row['is_paid'] else 'FREE'}\n"
+        f"💵 PRICE: {row['price']}\n"
+        f"🌍 SHARE: {'PUBLIC' if row['is_public'] else 'PRIVATE'}\n"
+        f"📦 TOTAL: {len(media)} FILES\n\n"
+        "📤 SENDING FILE..."
     )
+
+    # =========================
+    # KIRIM MEDIA
+    # =========================
+    for item in media:
+        try:
+            mtype = item[0]
+            file_id = item[1]
+
+            if mtype == "photo":
+                await message.answer_photo(file_id)
+
+            elif mtype == "video":
+                await message.answer_video(file_id)
+
+            elif mtype == "doc":
+                await message.answer_document(file_id)
+
+        except Exception:
+            continue
