@@ -91,7 +91,7 @@ def dashboard_text(user, balance_rp: int):
 
 
 # =========================
-# START (ULTRA FAST)
+# START
 # =========================
 @router.message(CommandStart())
 async def start(message: Message):
@@ -118,7 +118,7 @@ async def start(message: Message):
 
 
 # =========================
-# CHECK JOIN (FAST + SAFE)
+# CHECK JOIN
 # =========================
 @router.callback_query(F.data == "check_join")
 async def check_join(call: CallbackQuery):
@@ -128,22 +128,6 @@ async def check_join(call: CallbackQuery):
         return await call.answer("❌ Kamu belum join semua", show_alert=True)
 
     balance = await get_user_balance(user.id)
-
-    try:
-        # kalau sama, skip biar gak error "message not modified"
-        if call.message.text == dashboard_text(user, balance):
-            return await call.answer("✅ Already updated")
-    except:
-        pass
-
-    try:
-        await call.message.edit_text(
-            "✅ Verifying..."
-        )
-    except TelegramBadRequest:
-        pass
-
-    await asyncio.sleep(0.2)
 
     try:
         await call.message.edit_text(
@@ -157,12 +141,11 @@ async def check_join(call: CallbackQuery):
 
 
 # =========================
-# BACK HOME (SAFE)
+# BACK HOME
 # =========================
 @router.callback_query(F.data == "back_home")
 async def back_home(call: CallbackQuery):
     user = call.from_user
-
     balance = await get_user_balance(user.id)
 
     try:
@@ -172,5 +155,23 @@ async def back_home(call: CallbackQuery):
         )
     except TelegramBadRequest:
         pass
+
+    await call.answer()
+
+
+# =========================
+# GET FILE (FIX + LINK START FORMAT)
+# =========================
+@router.callback_query(F.data == "getfile")
+async def getfile(call: CallbackQuery):
+    code = "FLIW5SXKQY6G"  # nanti ini ambil dari DB
+
+    link = f"https://t.me/decodefilebot?start=decodefilebot_{code}"
+
+    await call.message.edit_text(
+        "📥 GET FILE\n\n"
+        f"🔗 Link kamu:\n{link}\n\n"
+        "Klik link untuk akses file."
+    )
 
     await call.answer()
