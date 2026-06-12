@@ -17,6 +17,7 @@ router = Router()
 # ================= CONFIG =================
 
 MAX_MEDIA = 100
+
 SESSION = {}
 LOCKS = {}
 
@@ -28,161 +29,112 @@ class UploadState(StatesGroup):
     price = State()
     share = State()
     review = State()
-    final = State()
 
 # ================= UTIL =================
 
 def gen_code():
-    base = secrets.token_hex(4) + str(time.time())
-    return "decodefilebot_" + secrets.token_hex(2) + "_" + base[:10]
+    return "decodefilebot_" + ''.join(
+        secrets.choice(string.ascii_uppercase + string.digits)
+        for _ in range(12)
+    )
 
-def parse_price(text: str) -> int:
-    if not text:
-        return 0
-    text = text.lower().replace(".", "").replace(",", "").replace("k", "000")
-    return int(re.sub(r"\D", "", text) or 0)
-
-def make_link(code: str):
-    return f"https://t.me/decodefilebot?start={code}"
-
-# ================= KEYBOARD =================
+# ================= KEYBOARD (FIX AIROGRAM V3) =================
 
 def kb_upload():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("✅ DONE", callback_data="done")],
-        [InlineKeyboardButton("❌ CANCEL", callback_data="cancel")]
+        [InlineKeyboardButton(text="✅ Done", callback_data="done")],
+        [InlineKeyboardButton(text="❌ Cancel", callback_data="cancel")]
     ])
 
 def kb_type():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("🆓 FREE", callback_data="free")],
-        [InlineKeyboardButton("💰 PAY", callback_data="paid")]
+        [InlineKeyboardButton(text="🆓 Free", callback_data="free")],
+        [InlineKeyboardButton(text="💰 Paid", callback_data="paid")]
     ])
 
 def kb_share():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("🌍 SHARE", callback_data="pub")],
-        [InlineKeyboardButton("🔒 NO SHARE", callback_data="pri")]
+        [InlineKeyboardButton(text="🌍 Public", callback_data="pub")],
+        [InlineKeyboardButton(text="🔒 Private", callback_data="pri")]
     ])
 
 def kb_review():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("💾 SAVE", callback_data="save")],
-        [InlineKeyboardButton("✏️ TYPE", callback_data="edit_type")],
-        [InlineKeyboardButton("💰 PRICE", callback_data="edit_price")],
-        [InlineKeyboardButton("📁 MEDIA", callback_data="edit_media")],
-        [InlineKeyboardButton("🌍 SHARE", callback_data="edit_share")],
-        [InlineKeyboardButton("❌ CANCEL", callback_data="cancel")]
+        [InlineKeyboardButton(text="💾 Save", callback_data="save")],
+        [InlineKeyboardButton(text="✏️ Type", callback_data="edit_type")],
+        [InlineKeyboardButton(text="💰 Price", callback_data="edit_price")],
+        [InlineKeyboardButton(text="📁 Media", callback_data="edit_media")],
+        [InlineKeyboardButton(text="🌍 Share", callback_data="edit_share")],
+        [InlineKeyboardButton(text="❌ Cancel", callback_data="cancel")]
     ])
 
-# ================= START =================
+# ================= START UPLOAD =================
 
 @router.callback_query(F.data == "upfile")
 async def start(call: CallbackQuery, state: FSMContext):
-
     uid = call.from_user.id
 
     SESSION[uid] = {
         "media": [],
-        "msg_id": None,
-        "locked": False
+        "is_paid": False,
+        "price": 0,
+        "public": True
     }
 
     await state.set_state(UploadState.collecting)
 
     msg = await call.message.edit_text(
-        "📁 UPLOAD MODE\n\nKirim media...",
+        "📁 Upload Mode\n\nKirim media...",
         reply_markup=kb_upload()
     )
 
-    SESSION[uid]["msg_id"] = msg.message_id
+    SESSION[uid]["msg"] = msg
     await call.answer()
 
 # ================= RECEIVE MEDIA =================
 
 @router.message(UploadState.collecting)
 async def receive(message: Message, state: FSMContext):
-
     uid = message.from_user.id
-    lock = LOCKS.setdefault(uid, asyncio.Lock())
+    sess = SESSION.get(uid)
 
-    async with lock:
+    if not sess:
+        return
 
-        sess = SESSION.get(uid)
-        if not sess or sess.get("locked"):
-            return
+    if len(sess["media"]) >= MAX_MEDIA:
+        return
 
-        media = sess["media"]
+    if message.photo:
+        f = message.photo[-1]
+        sess["media"].append(("photo", f.file_id))
+    elif message.video:
+        sess["media"].append(("video", message.video.file_id))
+    elif message.document:
+        sess["media"].append(("doc", message.document.file_id))
 
-        if len(media) >= MAX_MEDIA:
-            return
-
-        item = None
-
-        if message.photo:
-            f = message.photo[-1]
-            item = ("photo", f.file_id, f.file_size or 0)
-
-        elif message.video:
-            item = ("video", message.video.file_id, message.video.file_size or 0)
-
-        elif message.document:
-            item = ("doc", message.document.file_id, message.document.file_size or 0)
-
-        if not item:
-            return
-
-        media.append(item)
-
-        await state.update_data(media=media)
-
-        try:
-            await message.delete()
-        except:
-            pass
-
-        try:
-            await message.bot.edit_message_text(
-                chat_id=message.chat.id,
-                message_id=sess["msg_id"],
-                text=f"📁 UPLOAD MODE\n\n{len(media)}/{MAX_MEDIA}",
-                reply_markup=kb_upload()
-            )
-        except:
-            pass
+    try:
+        await message.delete()
+    except:
+        pass
 
 # ================= DONE =================
 
 @router.callback_query(F.data == "done")
 async def done(call: CallbackQuery, state: FSMContext):
-
     uid = call.from_user.id
     sess = SESSION.get(uid)
 
     if not sess or not sess["media"]:
-        return await call.answer("Kosong", True)
-
-    sess["locked"] = True
+        return await call.answer("Belum ada media", show_alert=True)
 
     await state.update_data(media=sess["media"])
     await state.set_state(UploadState.choose_type)
 
     await call.message.edit_text(
-        "📦 PILIH TIPE:",
+        "Pilih tipe:",
         reply_markup=kb_type()
     )
 
-    await call.answer()
-
-# ================= CANCEL =================
-
-@router.callback_query(F.data == "cancel")
-async def cancel(call: CallbackQuery, state: FSMContext):
-
-    SESSION.pop(call.from_user.id, None)
-    await state.clear()
-
-    await call.message.edit_text("❌ CANCEL")
     await call.answer()
 
 # ================= TYPE =================
@@ -191,16 +143,15 @@ async def cancel(call: CallbackQuery, state: FSMContext):
 async def choose_type(call: CallbackQuery, state: FSMContext):
 
     is_paid = call.data == "paid"
-
     await state.update_data(is_paid=is_paid)
 
     if is_paid:
         await state.set_state(UploadState.price)
-        await call.message.edit_text("💰 MASUKKAN HARGA:")
+        await call.message.edit_text("Masukkan harga:")
     else:
         await state.update_data(price=0)
         await state.set_state(UploadState.share)
-        await call.message.edit_text("PILIH SHARE:", reply_markup=kb_share())
+        await call.message.edit_text("Pilih share:", reply_markup=kb_share())
 
     await call.answer()
 
@@ -209,119 +160,107 @@ async def choose_type(call: CallbackQuery, state: FSMContext):
 @router.message(UploadState.price)
 async def price(message: Message, state: FSMContext):
 
-    price_val = parse_price(message.text)
+    txt = re.sub(r"\D", "", message.text or "")
+    if not txt:
+        return await message.answer("Format salah")
 
-    if price_val < 10000:
-        return await message.answer("Minimal 10000")
+    price_val = int(txt)
 
     await state.update_data(price=price_val)
     await state.set_state(UploadState.share)
 
-    await message.answer("PILIH SHARE:", reply_markup=kb_share())
+    await message.answer("Pilih share:", reply_markup=kb_share())
 
 # ================= SHARE =================
 
 @router.callback_query(F.data.in_(["pub", "pri"]))
 async def share(call: CallbackQuery, state: FSMContext):
 
-    is_public = call.data == "pub"
-
-    await state.update_data(public=is_public)
+    is_pub = call.data == "pub"
+    await state.update_data(public=is_pub)
 
     data = await state.get_data()
 
     await state.set_state(UploadState.review)
 
     await call.message.edit_text(
-        f"""📋 REVIEW
-
-Type: {"PAY" if data.get("is_paid") else "FREE"}
-Price: {data.get("price")}
-Share: {"PUBLIC" if is_public else "NO SHARE"}
-Media: {len(data.get("media", []))}
-""",
+        f"📋 REVIEW\n\n"
+        f"Type: {'PAID' if data['is_paid'] else 'FREE'}\n"
+        f"Price: {data['price']}\n"
+        f"Share: {'PUBLIC' if is_pub else 'PRIVATE'}\n"
+        f"Media: {len(data['media'])}",
         reply_markup=kb_review()
     )
 
     await call.answer()
 
-# ================= SAVE FINAL =================
+# ================= SAVE =================
 
 @router.callback_query(F.data == "save")
 async def save(call: CallbackQuery, state: FSMContext):
 
-    uid = call.from_user.id
+    data = await state.get_data()
 
-    if uid in LOCKS:
-        return await call.answer("Processing...", True)
+    code = gen_code()
+    link = f"https://t.me/decodefilebot?start={code}"
 
-    LOCKS[uid] = True
+    await DB.execute("""
+        INSERT INTO uploads(code, user_id, is_paid, price, is_public, media)
+        VALUES ($1,$2,$3,$4,$5,$6)
+    """,
+        code,
+        call.from_user.id,
+        data.get("is_paid"),
+        data.get("price"),
+        data.get("public"),
+        json.dumps(data.get("media", []))
+    )
 
-    try:
-        data = await state.get_data()
+    await call.message.edit_text(
+        f"✅ SUCCESS\n\n"
+        f"CODE: {code}\n"
+        f"LINK: https://t.me/decodefilebot_{code}\n"
+        f"TYPE: {'PAID' if data['is_paid'] else 'FREE'}\n"
+        f"PRICE: {data['price']}\n"
+        f"MEDIA: {len(data['media'])}"
+    )
 
-        code = gen_code()
-        link = make_link(code)
-
-        await DB.execute("""
-            INSERT INTO uploads
-            (code, user_id, is_paid, price, is_public, media, protect)
-            VALUES ($1,$2,$3,$4,$5,$6,$7)
-        """,
-            code,
-            uid,
-            data.get("is_paid"),
-            data.get("price"),
-            data.get("public"),
-            json.dumps(data.get("media", [])),
-            not data.get("public")
-        )
-
-        await call.message.edit_text(
-            f"""✅ SUCCESS
-
-CODE: {code}
-LINK: {link}
-TYPE: {"PAY" if data.get("is_paid") else "FREE"}
-PRICE: {data.get("price")}
-SHARE: {"PUBLIC" if data.get("public") else "NO SHARE"}
-MEDIA: {len(data.get("media", []))}
-"""
-        )
-
-        await state.clear()
-
-    except Exception as e:
-        await call.message.edit_text(f"❌ ERROR\n{e}")
-
-    finally:
-        LOCKS.pop(uid, None)
-        SESSION.pop(uid, None)
-        await call.answer()
+    SESSION.pop(call.from_user.id, None)
+    await state.clear()
+    await call.answer()
 
 # ================= EDIT =================
 
 @router.callback_query(F.data == "edit_type")
 async def edit_type(call: CallbackQuery, state: FSMContext):
     await state.set_state(UploadState.choose_type)
-    await call.message.edit_text("PILIH TIPE:", reply_markup=kb_type())
-    await call.answer()
-
-@router.callback_query(F.data == "edit_price")
-async def edit_price(call: CallbackQuery, state: FSMContext):
-    await state.set_state(UploadState.price)
-    await call.message.edit_text("MASUKKAN HARGA:")
+    await call.message.edit_text("Pilih tipe:", reply_markup=kb_type())
     await call.answer()
 
 @router.callback_query(F.data == "edit_share")
 async def edit_share(call: CallbackQuery, state: FSMContext):
     await state.set_state(UploadState.share)
-    await call.message.edit_text("PILIH SHARE:", reply_markup=kb_share())
+    await call.message.edit_text("Pilih share:", reply_markup=kb_share())
     await call.answer()
 
 @router.callback_query(F.data == "edit_media")
 async def edit_media(call: CallbackQuery, state: FSMContext):
     await state.set_state(UploadState.collecting)
-    await SESSION[call.from_user.id].update({"locked": False})
-    await call.message.edit_text("TAMBAH MEDIA:", reply_markup=kb_upload())
+    await call.message.edit_text("Tambah media...")
+    await call.answer()
+
+@router.callback_query(F.data == "edit_price")
+async def edit_price(call: CallbackQuery, state: FSMContext):
+    await state.set_state(UploadState.price)
+    await call.message.edit_text("Masukkan harga baru:")
+    await call.answer()
+
+# ================= CANCEL =================
+
+@router.callback_query(F.data == "cancel")
+async def cancel(call: CallbackQuery, state: FSMContext):
+    SESSION.pop(call.from_user.id, None)
+    await state.clear()
+
+    await call.message.edit_text("❌ Cancelled")
     await call.answer()
