@@ -10,8 +10,8 @@ router = Router()
 # =========================
 # CONFIG
 # =========================
-CHANNEL = "@your_channel"
-GROUP = "@your_group"
+CHANNEL = "https://t.me/+OzP85qRqCUhjMDE1"
+GROUP = "https://t.me/+DTL9cOR34ipmM2U1"
 
 
 # =========================
