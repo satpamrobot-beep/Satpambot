@@ -3,37 +3,23 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-
-# =========================
-# CORE BOT
-# =========================
+# BOT
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+# DATABASE
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+# FORCE SUB
+CHANNEL_UPDATE = os.getenv("CHANNEL_UPDATE")
+GROUP_CHAT = os.getenv("GROUP_CHAT")
 
-# =========================
-# OWNER & ADMINS
-# =========================
-OWNER_ID = int(os.getenv("OWNER_ID") or 0)
+# ADMIN
+ADMIN_IDS = list(
+    map(int, os.getenv("ADMIN_IDS", "").split(","))
+    if os.getenv("ADMIN_IDS")
+    else []
+)
 
-ADMINS = {
-    int(x)
-    for x in os.getenv("ADMINS", "").split(",")
-    if x.strip().isdigit()
-}
-
-
-# =========================
-# FORCE JOIN CONFIG
-# =========================
-FORCE_CHANNEL = int(os.getenv("FORCE_CHANNEL") or 0)
-GROUP_ID = int(os.getenv("GROUP_ID") or 0)
-
-UPDATE_CHANNEL = os.getenv("UPDATE_CHANNEL", "")
-NOTIFICATION_CHANNEL = int(os.getenv("NOTIFICATION_CHANNEL") or 0)
-
-
-# =========================
-# VIP
-# =========================
-VIP_LINK = os.getenv("VIP_LINK", "")
+# BAYARGG
+BAYARGG_API_KEY = os.getenv("BAYARGG_API_KEY")
+BAYARGG_SECRET = os.getenv("BAYARGG_SECRET")
