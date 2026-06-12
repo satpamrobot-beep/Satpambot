@@ -4,6 +4,8 @@ import os
 pool = None
 
 
+# ================= INIT =================
+
 async def init_db():
     global pool
 
@@ -17,7 +19,7 @@ async def init_db():
         min_size=1,
         max_size=10,
         command_timeout=60,
-        statement_cache_size=0  # 🔥 FIX PGBouncer ERROR
+        statement_cache_size=0  # 🔥 FIX PGBouncer
     )
 
     print("✅ POOLER CONNECTED")
@@ -36,3 +38,27 @@ async def close_db():
         await pool.close()
         pool = None
         print("🔒 POOL CLOSED")
+
+
+# ================= WRAPPER DB =================
+
+class Database:
+    async def execute(self, query, *args):
+        async with get_pool().acquire() as conn:
+            return await conn.execute(query, *args)
+
+    async def fetchrow(self, query, *args):
+        async with get_pool().acquire() as conn:
+            return await conn.fetchrow(query, *args)
+
+    async def fetch(self, query, *args):
+        async with get_pool().acquire() as conn:
+            return await conn.fetch(query, *args)
+
+    async def fetchval(self, query, *args):
+        async with get_pool().acquire() as conn:
+            return await conn.fetchval(query, *args)
+
+
+# 🔥 INI YANG DIPAKE DI SELURUH PROJECT
+DB = Database()
