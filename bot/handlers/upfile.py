@@ -1,8 +1,8 @@
 import asyncio
-import string
 import random
 import time
 import json
+import re
 
 from aiogram import Router, F
 from aiogram.types import (
@@ -17,13 +17,17 @@ from aiogram.fsm.state import StatesGroup, State
 from db.pool import get_pool
 
 router = Router()
-UPLOAD_LOCKS = {}
+
 SESSION = {}
+UPLOAD_LOCKS = {}
 
 MAX_MEDIA = 100
 MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024
 
 
+# =========================
+# STATE
+# =========================
 class UploadState(StatesGroup):
     collecting = State()
     choose_type = State()
@@ -32,646 +36,647 @@ class UploadState(StatesGroup):
     review = State()
 
 
+# =========================
+# UTILS
+# =========================
 def rand(n=14):
-    return ''.join(
-        random.choices(
-            string.ascii_letters + string.digits,
-            k=n
-        )
-    )
+    return ''.join(random.choices("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", k=n))
 
 
 def build_media_tag(p=0, v=0, d=0):
     parts = []
-
-    if p:
-        parts.append(f"{p}p")
-
-    if v:
-        parts.append(f"{v}v")
-
-    if d:
-        parts.append(f"{d}d")
-
+    if p: parts.append(f"{p}p")
+    if v: parts.append(f"{v}v")
+    if d: parts.append(f"{d}d")
     return "_".join(parts)
 
 
-UPLOAD_KB = InlineKeyboardMarkup(
-    inline_keyboard=[
-        [
-            InlineKeyboardButton(
-                text="✅ DONE",
-                callback_data="up_done"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="❌ CANCEL",
-                callback_data="up_cancel"
-            )
-        ]
-    ]
-)
+def human_size(size):
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if size < 1024:
+            return f"{size:.2f} {unit}"
+        size /= 1024
+    return f"{size:.2f} PB"
 
+
+# =========================
+# KEYBOARD
+# =========================
+UPLOAD_KB = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="✅ DONE", callback_data="up_done")],
+    [InlineKeyboardButton(text="❌ CANCEL", callback_data="up_cancel")]
+])
 
 def kb_type():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🆓 FREE",
-                    callback_data="type_free"
-                ),
-                InlineKeyboardButton(
-                    text="💰 PAID",
-                    callback_data="type_paid"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="❌ CANCEL",
-                    callback_data="up_cancel"
-                )
-            ]
-        ]
-    )
-
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🆓 FREE", callback_data="type_free"),
+            InlineKeyboardButton(text="💰 PAID", callback_data="type_paid")
+        ],
+        [InlineKeyboardButton(text="❌ CANCEL", callback_data="up_cancel")]
+    ])
 
 def kb_visibility():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🌍 PUBLIC",
-                    callback_data="share_yes"
-                ),
-                InlineKeyboardButton(
-                    text="🔒 PRIVATE",
-                    callback_data="share_no"
-                )
-            ]
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🌍 PUBLIC", callback_data="share_yes"),
+            InlineKeyboardButton(text="🔒 PRIVATE", callback_data="share_no")
         ]
-    )
-
+    ])
 
 def kb_save():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="💾 SAVE TO CLOUD",
-                    callback_data="save_upload"
-                )
-            ]
-        ]
-    )
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💾 SAVE TO CLOUD", callback_data="save_upload")]
+    ])
 
 
 # =========================
-# START
+# START UPLOAD
 # =========================
-
 @router.callback_query(F.data == "upfile")
-async def upfile(
-    call: CallbackQuery,
-    state: FSMContext
-):
+async def upfile(call: CallbackQuery, state: FSMContext):
 
     uid = call.from_user.id
 
-    if SESSION.get(uid, {}).get("active"):
-        return await call.answer(
-            "⛔ Masih ada sesi upload aktif",
-            show_alert=True
-        )
+    # =========================
+    # GLOBAL LOCK (ANTI SPAM CLICK)
+    # =========================
+    lock = UPLOAD_LOCKS.setdefault(uid, asyncio.Lock())
 
-    SESSION[uid] = {
-        "active": True,
-        "media": [],
-        "msg": None,
-        "last": 0,
-        "done": False,
-        "lock": False,
-        "created": time.time()
-    }
-
-    await state.set_state(
-        UploadState.collecting
-    )
-
-    try:
-
-        msg = await call.message.edit_text(
-            (
-                "📁 <b>UPLOAD MODE</b>\n\n"
-                "📦 Total     : 0/100\n"
-                "🖼 Photo     : 0\n"
-                "🎥 Video     : 0\n"
-                "📄 Document  : 0\n\n"
-                "👇 Kirim file kamu"
-            ),
-            reply_markup=UPLOAD_KB,
-            parse_mode="HTML"
-        )
-
-        SESSION[uid]["msg"] = msg or call.message
-
-    except Exception as e:
-
-        print(
-            f"UPLOAD PANEL ERROR: {e}"
-        )
-
-    await call.answer()
-# =========================
-# RECEIVE
-# =========================
-
-@router.message(
-    UploadState.collecting,
-    F.photo | F.video | F.document
-)
-async def receive(
-    message: Message,
-    state: FSMContext
-):
-
-    uid = message.from_user.id
-
-    lock = UPLOAD_LOCKS.setdefault(
-        uid,
-        asyncio.Lock()
-    )
+    if lock.locked():
+        return await call.answer()
 
     async with lock:
 
+        # =========================
+        # SESSION CHECK
+        # =========================
         sess = SESSION.get(uid)
 
-        if not sess:
+        if sess and sess.get("active"):
+            return await call.answer("⛔ Masih ada sesi upload aktif", show_alert=True)
+
+        # =========================
+        # RESET OLD DATA
+        # =========================
+        SESSION.pop(uid, None)
+
+        # =========================
+        # CREATE NEW SESSION
+        # =========================
+        SESSION[uid] = {
+            "active": True,
+            "media": [],
+            "msg": None,
+            "done": False,
+            "created": time.time(),
+            "expire": time.time() + 600  # 10 menit
+        }
+
+        # =========================
+        # SET STATE
+        # =========================
+        await state.set_state(UploadState.collecting)
+
+        # =========================
+        # SAFE EDIT / SEND PANEL
+        # =========================
+        try:
+            msg = await call.message.edit_text(
+                "📁 <b>UPLOAD MODE</b>\n\n"
+                f"📦 Total: 0/{MAX_MEDIA}\n"
+                "👇 Kirim file kamu",
+                reply_markup=UPLOAD_KB,
+                parse_mode="HTML"
+            )
+        except:
+            # fallback kalau gagal edit
+            msg = await call.message.answer(
+                "📁 <b>UPLOAD MODE</b>\n\n"
+                f"📦 Total: 0/{MAX_MEDIA}\n"
+                "👇 Kirim file kamu",
+                reply_markup=UPLOAD_KB,
+                parse_mode="HTML"
+            )
+
+        SESSION[uid]["msg"] = msg
+
+        await call.answer()
+
+
+# =========================
+# RECEIVE MEDIA
+# =========================
+@router.message(UploadState.collecting, F.photo | F.video | F.document)
+async def receive(message: Message, state: FSMContext):
+
+    uid = message.from_user.id
+
+    # =========================
+    # LOCK USER (ANTI FLOOD)
+    # =========================
+    lock = UPLOAD_LOCKS.setdefault(uid, asyncio.Lock())
+
+    async with lock:
+
+        # =========================
+        # SESSION VALIDATION
+        # =========================
+        sess = SESSION.get(uid)
+        if not sess or not sess.get("active"):
             return
 
         if sess.get("done"):
             return
 
-        if len(sess["media"]) >= MAX_MEDIA:
+        media_list = sess.setdefault("media", [])
 
+        # =========================
+        # STATE VALIDATION
+        # =========================
+        current = await state.get_state()
+        if current != UploadState.collecting:
+            return
+
+        # =========================
+        # LIMIT JUMLAH FILE
+        # =========================
+        if len(media_list) >= MAX_MEDIA:
             try:
                 await message.delete()
             except:
                 pass
-
             return
 
-        # =========================
-        # PHOTO
-        # =========================
+        file_type = None
+        file_id = None
+        file_size = 0
 
+        # =========================
+        # DETECT FILE
+        # =========================
         if message.photo:
-
-            sess["media"].append(
-                (
-                    "photo",
-                    message.photo[-1].file_id
-                )
-            )
-
-        # =========================
-        # VIDEO
-        # =========================
+            f = message.photo[-1]
+            file_type = "photo"
+            file_id = f.file_id
+            file_size = f.file_size or 0
 
         elif message.video:
-
-            if (
-                message.video.file_size
-                and
-                message.video.file_size > MAX_FILE_SIZE
-            ):
-                return
-
-            sess["media"].append(
-                (
-                    "video",
-                    message.video.file_id
-                )
-            )
-
-        # =========================
-        # DOCUMENT
-        # =========================
+            f = message.video
+            file_type = "video"
+            file_id = f.file_id
+            file_size = f.file_size or 0
 
         elif message.document:
-
-            if (
-                message.document.file_size
-                and
-                message.document.file_size > MAX_FILE_SIZE
-            ):
-                return
-
-            sess["media"].append(
-                (
-                    "doc",
-                    message.document.file_id
-                )
-            )
+            f = message.document
+            file_type = "doc"
+            file_id = f.file_id
+            file_size = f.file_size or 0
 
         # =========================
-        # COUNTER
+        # VALIDATE SIZE PER FILE
         # =========================
-
-        photo_count = sum(
-            1 for x in sess["media"]
-            if x[0] == "photo"
-        )
-
-        video_count = sum(
-            1 for x in sess["media"]
-            if x[0] == "video"
-        )
-
-        doc_count = sum(
-            1 for x in sess["media"]
-            if x[0] == "doc"
-        )
-
-        total = len(sess["media"])
+        if file_size and file_size > MAX_FILE_SIZE:
+            return await message.reply("❌ File terlalu besar")
 
         # =========================
-        # HAPUS PESAN USER
+        # VALIDATE TOTAL SIZE
         # =========================
+        total_size = sum(x[2] for x in media_list) + file_size
+        if total_size > MAX_TOTAL_SIZE:
+            return await message.reply("❌ Total size melebihi limit")
 
+        # =========================
+        # SAVE
+        # =========================
+        media_list.append((file_type, file_id, file_size))
+
+        # =========================
+        # COUNT (SAFE)
+        # =========================
+        p = v = d = 0
+        for x in media_list:
+            try:
+                if x[0] == "photo":
+                    p += 1
+                elif x[0] == "video":
+                    v += 1
+                elif x[0] == "doc":
+                    d += 1
+            except:
+                continue
+
+        # =========================
+        # DELETE USER MSG (SAFE)
+        # =========================
         try:
             await message.delete()
         except:
             pass
 
         # =========================
-        # UPDATE PANEL
+        # UPDATE PANEL (SAFE)
         # =========================
+        msg = sess.get("msg")
 
-        try:
-
-            panel = sess.get("msg")
-
-            if panel:
-
-                await panel.edit_text(
-                    (
-                        "📁 <b>UPLOAD MODE</b>\n\n"
-                        f"📦 Total     : {total}/{MAX_MEDIA}\n"
-                        f"🖼 Photo     : {photo_count}\n"
-                        f"🎥 Video     : {video_count}\n"
-                        f"📄 Document  : {doc_count}\n\n"
-                        "👇 Klik DONE jika selesai"
-                    ),
+        if msg:
+            try:
+                await msg.edit_text(
+                    "📁 <b>UPLOAD MODE</b>\n\n"
+                    f"📦 Total: {len(media_list)}/{MAX_MEDIA}\n"
+                    f"🖼 Photo: {p}\n"
+                    f"🎥 Video: {v}\n"
+                    f"📄 Doc: {d}\n"
+                    f"💾 Size: {human_size(total_size)}",
                     reply_markup=UPLOAD_KB,
                     parse_mode="HTML"
                 )
-
-        except Exception as e:
-
-            print(
-                "UPLOAD PANEL ERROR:",
-                e
-            )
+            except:
+                pass
 # =========================
 # DONE
 # =========================
-
 @router.callback_query(F.data == "up_done")
-async def done(
-    call: CallbackQuery,
-    state: FSMContext
-):
+async def done(call: CallbackQuery, state: FSMContext):
 
     uid = call.from_user.id
+
+    # =========================
+    # SESSION VALIDATION
+    # =========================
     sess = SESSION.get(uid)
+    if not sess or not sess.get("active"):
+        return await call.answer("⚠️ Session tidak valid", show_alert=True)
 
-    if not sess:
+    media = sess.get("media", [])
+    if not media:
+        return await call.answer("⚠️ Media kosong", show_alert=True)
+
+    # =========================
+    # ANTI SPAM CLICK
+    # =========================
+    if sess.get("done_locked"):
         return await call.answer()
 
-    if sess.get("lock"):
-        return await call.answer()
+    sess["done_locked"] = True
 
-    sess["lock"] = True
+    # =========================
+    # STATE VALIDATION
+    # =========================
+    current = await state.get_state()
+    if current != UploadState.uploading:
+        sess["done_locked"] = False
+        return await call.answer("⚠️ Flow tidak valid", show_alert=True)
 
-    try:
+    # =========================
+    # PREVENT DOUBLE DONE
+    # =========================
+    if sess.get("done"):
+        sess["done_locked"] = False
+        return await call.answer("⚠️ Sudah diproses", show_alert=True)
 
-        if not sess["media"]:
-            return await call.answer(
-                "❌ kosong",
-                show_alert=True
-            )
+    sess["done"] = True
 
-        media = list(sess["media"])
+    # =========================
+    # COUNT MEDIA (SAFE)
+    # =========================
+    photo = 0
+    video = 0
+    doc = 0
 
-        p = sum(
-            1
-            for x in media
-            if x[0] == "photo"
-        )
-
-        v = sum(
-            1
-            for x in media
-            if x[0] == "video"
-        )
-
-        d = sum(
-            1
-            for x in media
-            if x[0] == "doc"
-        )
-
-        sess["done"] = True
-
-        await state.update_data(
-            media=media,
-            photo=p,
-            video=v,
-            doc=d
-        )
-
-        await state.set_state(
-            UploadState.choose_type
-        )
-
+    for m in media:
         try:
-            await call.message.edit_text(
-                f"☁️ UPLOAD DONE\n\nTotal: {len(media)}",
-                reply_markup=kb_type()
-            )
+            if m[0] == "photo":
+                photo += 1
+            elif m[0] == "video":
+                video += 1
+            elif m[0] == "doc":
+                doc += 1
         except:
-            pass
-
-    finally:
-        sess["lock"] = False
-
-    await call.answer()
-
-
-# =========================
-# TYPE
-# =========================
-
-@router.callback_query(
-    F.data.in_(
-        {
-            "type_free",
-            "type_paid"
-        }
-    )
-)
-async def type_handler(
-    call: CallbackQuery,
-    state: FSMContext
-):
-
-    is_paid = (
-        call.data == "type_paid"
-    )
+            continue
 
     await state.update_data(
-        is_paid=is_paid
+        media=media,
+        photo=photo,
+        video=video,
+        doc=doc
     )
 
-    if is_paid:
+    await state.set_state(UploadState.choose_type)
 
-        await state.set_state(
-            UploadState.price
-        )
-
-        await call.message.edit_text(
-            "💰 Masukkan harga"
-        )
-
-    else:
-
-        await state.update_data(
-            price=0
-        )
-
-        await state.set_state(
-            UploadState.share
-        )
-
-        await call.message.edit_text(
-            "Visibility",
-            reply_markup=kb_visibility()
-        )
-
-    await call.answer()
-
-
-# =========================
-# PRICE
-# =========================
-
-@router.message(
-    UploadState.price
-)
-async def price_handler(
-    message: Message,
-    state: FSMContext
-):
-
-    if (
-        not message.text
-        or
-        not message.text.isdigit()
-    ):
-        return await message.answer(
-            "❌ Masukkan angka"
-        )
-
-    price = int(message.text)
-
-    if price <= 0:
-        return await message.answer(
-            "❌ Harga minimal 1"
-        )
-
-    await state.update_data(
-        price=price
-    )
-
-    await state.set_state(
-        UploadState.share
-    )
-
-    await message.answer(
-        "Visibility",
-        reply_markup=kb_visibility()
-    )
-
-
-# =========================
-# SHARE
-# =========================
-
-@router.callback_query(
-    F.data.in_(
-        {
-            "share_yes",
-            "share_no"
-        }
-    )
-)
-async def share_handler(
-    call: CallbackQuery,
-    state: FSMContext
-):
-
-    data = await state.get_data()
-
-    await state.update_data(
-        share=(
-            call.data == "share_yes"
-        )
-    )
-
-    await state.set_state(
-        UploadState.review
-    )
-
-    await call.message.edit_text(
-        f"REVIEW\nFiles: {len(data.get('media', []))}",
-        reply_markup=kb_save()
-    )
-
-    await call.answer()
-
-
-# =========================
-# SAVE
-# =========================
-
-@router.callback_query(F.data == "save_upload")
-async def save(
-    call: CallbackQuery,
-    state: FSMContext
-):
-
-    data = await state.get_data()
-    media = data.get("media", [])
-
-    user = call.from_user
-
-    username = user.username
-
-    display_name = (
-        f"@{username}"
-        if username
-        else user.full_name
-    )
-
-    tag = build_media_tag(
-        data.get("photo", 0),
-        data.get("video", 0),
-        data.get("doc", 0)
-    )
-
-    code = f"earnfilebot_{rand(14)}_{tag}"
-
-    try:
-
-        pool = get_pool()
-
-        async with pool.acquire() as conn:
-
-            await conn.execute(
-                """
-                INSERT INTO uploads (
-                    code,
-                    user_id,
-                    username,
-                    media,
-                    photo_count,
-                    video_count,
-                    doc_count,
-                    is_paid,
-                    price,
-                    is_share,
-                    created_at
-                )
-                VALUES (
-                    $1,$2,$3,$4,
-                    $5,$6,$7,
-                    $8,$9,$10,
-                    NOW()
-                )
-                """,
-                code,
-                user.id,
-                username or user.full_name,
-                json.dumps(media),
-                data.get("photo", 0),
-                data.get("video", 0),
-                data.get("doc", 0),
-                data.get("is_paid", False),
-                data.get("price", 0),
-                data.get("share", False)
-            )
-
-    except Exception as e:
-
-        SESSION.pop(
-            user.id,
-            None
-        )
-
-        await state.clear()
-
-        return await call.message.edit_text(
-            f"❌ DB ERROR\n\n{e}"
-        )
-
-    SESSION.pop(
-        user.id,
-        None
-    )
-
-    await state.clear()
-
-    await call.message.edit_text(
-        f"""🎉 SUCCESS SAVE
-
-🔑 CODE:
-<code>{code}</code>
-
-📦 FILE:
-{len(media)}
-
-👤 CREATE BY:
-{display_name}
-"""
-    )
-
-    await call.answer()
-
-
-# =========================
-# CANCEL
-# =========================
-
-@router.callback_query(F.data == "up_cancel")
-async def cancel_upload(
-    call: CallbackQuery,
-    state: FSMContext
-):
-
-    SESSION.pop(
-        call.from_user.id,
-        None
-    )
-
-    await state.clear()
-
+    # =========================
+    # SAFE EDIT
+    # =========================
     try:
         await call.message.edit_text(
-            "❌ Upload dibatalkan"
+            "☁️ <b>UPLOAD SELESAI</b>\n\n💡 Pilih tipe:",
+            reply_markup=kb_type(),
+            parse_mode="HTML"
         )
     except:
         pass
 
+    await call.answer()
+
+    # =========================
+    # UNLOCK
+    # =========================
+    sess["done_locked"] = False
+# =========================
+# TYPE
+# =========================
+@router.callback_query(F.data.in_({"type_free", "type_paid"}))
+async def type_handler(call: CallbackQuery, state: FSMContext):
+
+    uid = call.from_user.id
+
+    # =========================
+    # SESSION VALIDATION
+    # =========================
+    sess = SESSION.get(uid)
+    if not sess or not sess.get("active"):
+        return await call.answer("⚠️ Session tidak valid", show_alert=True)
+
+    # =========================
+    # ANTI SPAM CLICK
+    # =========================
+    if sess.get("type_locked"):
+        return await call.answer()
+
+    sess["type_locked"] = True
+
+    # =========================
+    # STATE VALIDATION
+    # =========================
+    current = await state.get_state()
+    if current != UploadState.choose_type:
+        sess["type_locked"] = False
+        return await call.answer("⚠️ Flow tidak valid", show_alert=True)
+
+    # =========================
+    # PROCESS
+    # =========================
+    is_paid = call.data == "type_paid"
+    await state.update_data(is_paid=is_paid)
+
+    try:
+        if is_paid:
+            await state.set_state(UploadState.price)
+
+            await call.message.edit_text(
+                "💰 <b>Masukkan harga:</b>",
+                parse_mode="HTML"
+            )
+
+        else:
+            await state.update_data(price=0)
+            await state.set_state(UploadState.share)
+
+            await call.message.edit_text(
+                "🌍 <b>Pilih visibility:</b>",
+                reply_markup=kb_visibility(),
+                parse_mode="HTML"
+            )
+
+    except:
+        pass
+
+    await call.answer()
+
+    # =========================
+    # UNLOCK
+    # =========================
+    sess["type_locked"] = False
+# =========================
+# PRICE
+# =========================
+@router.message(UploadState.price)
+async def price_handler(message: Message, state: FSMContext):
+
+    uid = message.from_user.id
+
+    # =========================
+    # SESSION VALIDATION
+    # =========================
+    sess = SESSION.get(uid)
+    if not sess or not sess.get("active"):
+        return
+
+    # =========================
+    # ANTI SPAM INPUT
+    # =========================
+    if sess.get("price_locked"):
+        return
+
+    sess["price_locked"] = True
+
+    # =========================
+    # VALIDATE STATE
+    # =========================
+    current = await state.get_state()
+    if current != UploadState.price:
+        sess["price_locked"] = False
+        return
+
+    # =========================
+    # PARSE INPUT
+    # =========================
+    text = message.text or ""
+    price_text = re.sub(r"\D", "", text)
+
+    if not price_text:
+        sess["price_locked"] = False
+        return await message.answer("❌ Masukkan angka yang valid")
+
+    price = int(price_text)
+
+    # =========================
+    # VALIDASI RANGE
+    # =========================
+    if price < 1000:
+        sess["price_locked"] = False
+        return await message.answer("❌ Minimal Rp 1.000")
+
+    if price > 1_000_000_000:
+        sess["price_locked"] = False
+        return await message.answer("❌ Maksimal Rp 1M")
+
+    # =========================
+    # SAVE DATA
+    # =========================
+    await state.update_data(price=price)
+    await state.set_state(UploadState.share)
+
+    # =========================
+    # FORMAT RAPI
+    # =========================
+    formatted_price = f"Rp {price:,}".replace(",", ".")
+
+    try:
+        await message.answer(
+            f"✅ Harga diset: <b>{formatted_price}</b>\n\n🌍 Pilih visibility:",
+            reply_markup=kb_visibility(),
+            parse_mode="HTML"
+        )
+    except:
+        pass
+
+    # =========================
+    # UNLOCK
+    # =========================
+    sess["price_locked"] = False
+# =========================
+# SHARE + REVIEW
+# =========================
+@router.callback_query(F.data.in_({"share_yes", "share_no"}))
+async def share_handler(call: CallbackQuery, state: FSMContext):
+
+    uid = call.from_user.id
+
+    # ✅ ambil session (optional tapi penting buat kontrol)
+    sess = SESSION.get(uid)
+    if not sess or not sess.get("active"):
+        return await call.answer("⚠️ Session tidak valid", show_alert=True)
+
+    # ✅ anti spam klik
+    if sess.get("share_locked"):
+        return await call.answer()
+
+    sess["share_locked"] = True
+
+    # =========================
+    # PROCESS
+    # =========================
+    is_public = call.data == "share_yes"
+    await state.update_data(share=is_public)
+
+    data = await state.get_data()
+
+    # ✅ safe get (anti KeyError)
+    is_paid = data.get("is_paid", False)
+    price = data.get("price", 0)
+
+    status = "💰 PAID" if is_paid else "🆓 FREE"
+
+    await state.set_state(UploadState.review)
+
+    text = f"""
+📋 <b>REVIEW UPLOAD</b>
+
+📌 Type : {status}
+💳 Price : {price}
+🌍 Share : {"PUBLIC" if is_public else "PRIVATE"}
+
+👇 SAVE untuk lanjut
+"""
+
+    # =========================
+    # SAFE EDIT (ANTI CRASH)
+    # =========================
+    try:
+        await call.message.edit_text(
+            text,
+            reply_markup=kb_save(),
+            parse_mode="HTML"
+        )
+    except:
+        pass
+
+    await call.answer()
+# =========================
+# SAVE
+# =========================
+@router.callback_query(F.data == "save_upload")
+async def save(call: CallbackQuery, state: FSMContext):
+
+    uid = call.from_user.id
+    user = call.from_user
+
+    sess = SESSION.get(uid)
+
+    # ✅ Anti double click
+    if not sess or sess.get("saved"):
+        return await call.answer("⚠️ Sudah disimpan", show_alert=True)
+
+    sess["saved"] = True  # lock langsung
+
+    data = await state.get_data()
+
+    code = f"earnfilebot_{rand(14)}"
+
+    try:
+        pool = get_pool()
+
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO uploads (
+                    code,user_id,username,media,
+                    photo_count,video_count,doc_count,
+                    is_paid,price,is_share,created_at
+                )
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
+                """,
+                code,
+                user.id,
+                user.username or user.full_name,
+                json.dumps(data["media"]),
+                data["photo"],
+                data["video"],
+                data["doc"],
+                data["is_paid"],
+                data.get("price", 0),
+                data["share"]
+            )
+
+    except Exception:
+        # ❌ jangan expose error asli
+        sess["saved"] = False  # unlock biar bisa retry
+        return await call.message.edit_text("❌ Database error, coba lagi")
+
+    # cleanup
+    await state.clear()
+    SESSION.pop(uid, None)
+    UPLOAD_LOCKS.pop(uid, None)
+
+    bot_username = (await call.bot.get_me()).username
+    link = f"https://t.me/{bot_username}?start={code}"
+
+    # ✅ safe edit
+    try:
+        await call.message.edit_text(
+f"""
+🎉 <b>SUCCESS SAVE</b>
+
+🔑 CODE:
+<code>{code}</code>
+
+💳 STATUS:
+{"💰 PAID" if data["is_paid"] else "🆓 FREE"}
+
+📁 MEDIA:
+{"Public" if data["share"] else "Private"}
+
+💰 PRICE:
+{data.get("price", 0)}
+
+🔗 LINK:
+{link}
+""",
+            parse_mode="HTML"
+        )
+    except:
+        pass
+
+    await call.answer()
+# =========================
+# CANCEL
+# =========================
+@router.callback_query(F.data == "up_cancel")
+async def cancel(call: CallbackQuery, state: FSMContext):
+
+    SESSION.pop(call.from_user.id, None)
+    await state.clear()
+
+    await call.message.edit_text("❌ Cancelled")
     await call.answer()
