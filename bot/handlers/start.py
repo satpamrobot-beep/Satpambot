@@ -1,3 +1,5 @@
+import asyncio
+
 from aiogram import Router, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -66,14 +68,14 @@ def home_kb():
 # =========================
 def join_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Join Channel", url=f"https://t.me/c/{str(CHANNEL)[4:]}")],
-        [InlineKeyboardButton(text="Join Group", url=f"https://t.me/c/{str(GROUP)[4:]}")],
-        [InlineKeyboardButton(text="Check Join", callback_data="cek_join")]
+        [InlineKeyboardButton(text="📢 Join Channel", url="https://t.me/your_channel")],
+        [InlineKeyboardButton(text="👥 Join Group", url="https://t.me/your_group")],
+        [InlineKeyboardButton(text="🔄 Check Join", callback_data="cek_join")]
     ])
 
 
 # =========================
-# CHECK JOIN (FIXED)
+# CHECK JOIN (ANTI BYPASS CORE)
 # =========================
 async def check_join(bot, user_id: int, chat: int) -> bool:
     try:
@@ -92,7 +94,16 @@ async def check_join(bot, user_id: int, chat: int) -> bool:
 
 
 # =========================
-# SAVE USER
+# FORCE VERIFY (ANTI BYPASS LAYER)
+# =========================
+async def force_verify(bot, user_id: int) -> bool:
+    ch = await check_join(bot, user_id, CHANNEL)
+    gp = await check_join(bot, user_id, GROUP)
+    return ch and gp
+
+
+# =========================
+# SAVE USER (NON-BLOCKING)
 # =========================
 async def save_user(user):
     pool = get_pool()
@@ -106,26 +117,35 @@ async def save_user(user):
 
 
 # =========================
-# START
+# START (FAST + BALANCE + FORCE JOIN)
 # =========================
 @router.message(CommandStart())
 async def start(message: Message, bot):
     user = message.from_user
 
-    await save_user(user)
+    # async save biar tidak delay
+    asyncio.create_task(save_user(user))
 
-    ch = await check_join(bot, user.id, CHANNEL)
-    gp = await check_join(bot, user.id, GROUP)
-
-    if not ch or not gp:
+    # force join check (ANTI BYPASS)
+    if not await force_verify(bot, user.id):
         await message.answer(
-            "⚠️ Please join to continue",
+            "⚠️ You must join channel & group first",
             reply_markup=join_kb()
         )
         return
 
-    balance = 0
+    # ambil balance dari DB
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        balance = await conn.fetchval(
+            "SELECT balance FROM users WHERE user_id=$1",
+            user.id
+        )
 
+    if balance is None:
+        balance = 0
+
+    # dashboard
     await message.answer(
         dashboard_text(user, balance),
         reply_markup=home_kb(),
@@ -140,12 +160,20 @@ async def start(message: Message, bot):
 async def cek_join(callback: CallbackQuery, bot):
     user_id = callback.from_user.id
 
-    ch = await check_join(bot, user_id, CHANNEL)
-    gp = await check_join(bot, user_id, GROUP)
+    if await force_verify(bot, user_id):
+        pool = get_pool()
 
-    if ch and gp:
+        async with pool.acquire() as conn:
+            balance = await conn.fetchval(
+                "SELECT balance FROM users WHERE user_id=$1",
+                user_id
+            )
+
+        if balance is None:
+            balance = 0
+
         await callback.message.edit_text(
-            dashboard_text(callback.from_user, 0),
+            dashboard_text(callback.from_user, balance),
             reply_markup=home_kb(),
             parse_mode="HTML"
         )
@@ -154,13 +182,22 @@ async def cek_join(callback: CallbackQuery, bot):
 
 
 # =========================
-# HOME
+# HOME REFRESH
 # =========================
 @router.callback_query(F.data == "home")
 async def home(callback: CallbackQuery):
     user = callback.from_user
 
-    balance = 0
+    pool = get_pool()
+
+    async with pool.acquire() as conn:
+        balance = await conn.fetchval(
+            "SELECT balance FROM users WHERE user_id=$1",
+            user.id
+        )
+
+    if balance is None:
+        balance = 0
 
     await callback.message.edit_text(
         dashboard_text(user, balance),
