@@ -223,23 +223,24 @@ async def save(call: CallbackQuery, state: FSMContext):
     code = gen_code()
     link = f"https://t.me/Decodefilebot?start={code}"
 
-    # 🔥 SIMPAN KE DATABASE
     try:
         await DB.execute("""
-            INSERT INTO uploads (code, user_id, is_paid, price, is_public, media)
-            VALUES ($1,$2,$3,$4,$5,$6)
+            INSERT INTO uploads 
+            (code, user_id, is_paid, price, is_public, media, protect)
+            VALUES ($1,$2,$3,$4,$5,$6,$7)
         """,
             code,
             call.from_user.id,
             data.get("is_paid"),
             data.get("price"),
             data.get("public"),
-            data.get("media")
+            data.get("media"),
+            not data.get("public")  # 🔐 AUTO PROTECT
         )
+
     except Exception as e:
         return await call.message.edit_text(f"❌ DB ERROR\n{e}")
 
-    # 🔥 TAMPILKAN INFO LENGKAP (GABUNGAN)
     await call.message.edit_text(
         f"✅ SUCCESS\n\n"
         f"Code: {code}\n"
@@ -298,7 +299,7 @@ async def pay(message: Message):
 
 from aiogram.types import InputMediaPhoto, InputMediaVideo, FSInputFile
 
-async def send_media(message: Message, media):
+async def send_media(message: Message, media, protect=False):
     group = []
 
     for m in media:
@@ -309,42 +310,68 @@ async def send_media(message: Message, media):
         elif tipe == "video":
             group.append(InputMediaVideo(media=file_id))
         elif tipe == "doc":
-            # doc gak bisa digroup → kirim satu-satu
-            await message.answer_document(file_id)
+            await message.answer_document(
+                file_id,
+                protect_content=protect  # 🔐 FIX
+            )
             continue
 
         if len(group) == 10:
-            await message.answer_media_group(group)
+            await message.answer_media_group(
+                group,
+                protect_content=protect  # 🔐 FIX
+            )
             group = []
 
     if group:
-        await message.answer_media_group(group)
+        await message.answer_media_group(
+            group,
+            protect_content=protect  # 🔐 FIX
+        )
 
 
 @router.message(F.text.startswith("/start"))
 async def start_cmd(message: Message):
     args = message.text.split()
 
+    # 🔹 START BIASA
     if len(args) < 2:
-        return await message.answer("Welcome")
+        return await message.answer("👋 Welcome")
 
     code = args[1]
 
-    row = await DB.fetchrow("SELECT * FROM uploads WHERE code=$1", code)
+    # 🔥 AMBIL DATA
+    row = await DB.fetchrow(
+        "SELECT code, media, is_paid, price, protect FROM uploads WHERE code=$1",
+        code
+    )
 
     if not row:
-        return await message.answer("Code tidak valid")
+        return await message.answer("❌ Code tidak valid")
 
-    # 🔒 BARU CEK USED SETELAH VALID
-    if code in USED:
-        return await message.answer("Link sudah digunakan")
+    # 🔒 ANTI SPAM (optional per user, bukan global)
+    user_key = f"{message.from_user.id}:{code}"
+    if user_key in USED:
+        return await message.answer("⚠️ Link sudah digunakan")
 
+    # 💰 PAID CHECK
     if row["is_paid"]:
         return await message.answer(
-            f"💰 Konten berbayar\nHarga: {row['price']}\n\nKetik /pay {code}"
+            f"💰 Konten berbayar\n"
+            f"Harga: {row['price']}\n\n"
+            f"Ketik:\n/pay {code}"
         )
 
-    # ✅ TANDAI
-    USED.add(code)
+    # 🔥 VALIDASI MEDIA
+    if not row["media"]:
+        return await message.answer("❌ File kosong / rusak")
 
-    await send_media(message, row["media"])
+    # ✅ TANDAI USED
+    USED.add(user_key)
+
+    # 🔐 KIRIM MEDIA (INI INTI NYA)
+    await send_media(
+        message,
+        row["media"],
+        protect=row["protect"]  # 🔥 PRIVATE = TRUE → NO FORWARD
+    )
