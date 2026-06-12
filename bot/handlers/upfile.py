@@ -1,5 +1,4 @@
 import asyncio
-import time
 import re
 import secrets
 import string
@@ -19,7 +18,6 @@ router = Router()
 MAX_MEDIA = 100
 
 SESSION = {}
-LOCKS = {}
 
 # ================= STATE =================
 
@@ -33,12 +31,14 @@ class UploadState(StatesGroup):
 # ================= UTIL =================
 
 def gen_code():
-    return "decodefilebot_" + ''.join(
-        secrets.choice(string.ascii_uppercase + string.digits)
-        for _ in range(12)
-    )
+    code = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(12))
+    return f"decodefilebot_{code}"
 
-# ================= KEYBOARD (FIX AIROGRAM V3) =================
+def gen_link(code: str):
+    # FIX UTAMA: format telegram benar
+    return f"https://t.me/decodefilebot?start={code}"
+
+# ================= KEYBOARD (AIROGRAM V3 FIX) =================
 
 def kb_upload():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -68,10 +68,11 @@ def kb_review():
         [InlineKeyboardButton(text="❌ Cancel", callback_data="cancel")]
     ])
 
-# ================= START UPLOAD =================
+# ================= START =================
 
 @router.callback_query(F.data == "upfile")
 async def start(call: CallbackQuery, state: FSMContext):
+
     uid = call.from_user.id
 
     SESSION[uid] = {
@@ -83,18 +84,18 @@ async def start(call: CallbackQuery, state: FSMContext):
 
     await state.set_state(UploadState.collecting)
 
-    msg = await call.message.edit_text(
+    await call.message.edit_text(
         "📁 Upload Mode\n\nKirim media...",
         reply_markup=kb_upload()
     )
 
-    SESSION[uid]["msg"] = msg
     await call.answer()
 
 # ================= RECEIVE MEDIA =================
 
 @router.message(UploadState.collecting)
 async def receive(message: Message, state: FSMContext):
+
     uid = message.from_user.id
     sess = SESSION.get(uid)
 
@@ -107,8 +108,10 @@ async def receive(message: Message, state: FSMContext):
     if message.photo:
         f = message.photo[-1]
         sess["media"].append(("photo", f.file_id))
+
     elif message.video:
         sess["media"].append(("video", message.video.file_id))
+
     elif message.document:
         sess["media"].append(("doc", message.document.file_id))
 
@@ -121,6 +124,7 @@ async def receive(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "done")
 async def done(call: CallbackQuery, state: FSMContext):
+
     uid = call.from_user.id
     sess = SESSION.get(uid)
 
@@ -161,12 +165,11 @@ async def choose_type(call: CallbackQuery, state: FSMContext):
 async def price(message: Message, state: FSMContext):
 
     txt = re.sub(r"\D", "", message.text or "")
+
     if not txt:
         return await message.answer("Format salah")
 
-    price_val = int(txt)
-
-    await state.update_data(price=price_val)
+    await state.update_data(price=int(txt))
     await state.set_state(UploadState.share)
 
     await message.answer("Pilih share:", reply_markup=kb_share())
@@ -185,10 +188,10 @@ async def share(call: CallbackQuery, state: FSMContext):
 
     await call.message.edit_text(
         f"📋 REVIEW\n\n"
-        f"Type: {'PAID' if data['is_paid'] else 'FREE'}\n"
-        f"Price: {data['price']}\n"
+        f"Type: {'PAID' if data.get('is_paid') else 'FREE'}\n"
+        f"Price: {data.get('price', 0)}\n"
         f"Share: {'PUBLIC' if is_pub else 'PRIVATE'}\n"
-        f"Media: {len(data['media'])}",
+        f"Media: {len(data.get('media', []))}",
         reply_markup=kb_review()
     )
 
@@ -202,7 +205,7 @@ async def save(call: CallbackQuery, state: FSMContext):
     data = await state.get_data()
 
     code = gen_code()
-    link = f"https://t.me/decodefilebot?start={code}"
+    link = gen_link(code)
 
     await DB.execute("""
         INSERT INTO uploads(code, user_id, is_paid, price, is_public, media)
@@ -219,10 +222,10 @@ async def save(call: CallbackQuery, state: FSMContext):
     await call.message.edit_text(
         f"✅ SUCCESS\n\n"
         f"CODE: {code}\n"
-        f"LINK: https://t.me/decodefilebot_{code}\n"
-        f"TYPE: {'PAID' if data['is_paid'] else 'FREE'}\n"
-        f"PRICE: {data['price']}\n"
-        f"MEDIA: {len(data['media'])}"
+        f"LINK: {link}\n"
+        f"TYPE: {'PAID' if data.get('is_paid') else 'FREE'}\n"
+        f"PRICE: {data.get('price')}\n"
+        f"MEDIA: {len(data.get('media', []))}"
     )
 
     SESSION.pop(call.from_user.id, None)
@@ -252,13 +255,14 @@ async def edit_media(call: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "edit_price")
 async def edit_price(call: CallbackQuery, state: FSMContext):
     await state.set_state(UploadState.price)
-    await call.message.edit_text("Masukkan harga baru:")
+    await call.message.edit_text("Masukkan harga:")
     await call.answer()
 
 # ================= CANCEL =================
 
 @router.callback_query(F.data == "cancel")
 async def cancel(call: CallbackQuery, state: FSMContext):
+
     SESSION.pop(call.from_user.id, None)
     await state.clear()
 
