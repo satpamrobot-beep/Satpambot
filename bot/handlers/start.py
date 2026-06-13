@@ -1,6 +1,7 @@
 import asyncio
 import time
 
+from bot.db.user import save_user
 from aiogram import Router, F
 from aiogram.filters import CommandStart, ChatMemberUpdatedFilter
 from aiogram.types import (
