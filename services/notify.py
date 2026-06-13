@@ -1,10 +1,9 @@
 from aiogram import Bot
 import os
+import asyncio
+
 from bot.db.database import get_pool
 
-# =========================
-# BOT INSTANCE
-# =========================
 bot: Bot | None = None
 
 
@@ -13,47 +12,44 @@ def set_bot(instance: Bot):
     bot = instance
 
 
-# =========================
-# CONFIG
-# =========================
 ADMIN_GROUP_ID = int(os.getenv("ADMIN_GROUP_ID", "0"))
 
 
 # =========================
-# BASE SEND SAFE
+# SEND SAFE USER MESSAGE
+# =========================
+async def send_user(user_id: int, text: str):
+    if not bot:
+        return
+    try:
+        await bot.send_message(user_id, text, parse_mode="HTML")
+    except:
+        pass
+
+
+# =========================
+# SEND ADMIN GROUP LOG
 # =========================
 async def send_group(text: str):
     if not bot or not ADMIN_GROUP_ID:
         return
-
     try:
-        await bot.send_message(
-            ADMIN_GROUP_ID,
-            text,
-            parse_mode="HTML"
-        )
-    except:
-        pass
-
-
-async def send_user(user_id: int, text: str):
-    if not bot:
-        return
-
-    try:
-        await bot.send_message(
-            user_id,
-            text,
-            parse_mode="HTML"
-        )
+        await bot.send_message(ADMIN_GROUP_ID, text, parse_mode="HTML")
     except:
         pass
 
 
 # =========================
-# PAYMENT NOTIFY
+# PAYMENT NOTIFY (USER + ADMIN)
 # =========================
-async def notify_payment(user_id: int, amount: int, trx_id: str = ""):
+async def notify_payment(user_id: int, amount: int, trx_id: str):
+    await send_user(
+        user_id,
+        f"💰 <b>Payment Success</b>\n"
+        f"Saldo masuk: Rp {amount:,.0f}\n"
+        f"TRX: {trx_id}"
+    )
+
     await send_group(
         "💸 <b>PAYMENT SUCCESS</b>\n"
         f"User: <code>{user_id}</code>\n"
@@ -61,39 +57,18 @@ async def notify_payment(user_id: int, amount: int, trx_id: str = ""):
         f"TRX: <code>{trx_id}</code>"
     )
 
-    await send_user(
-        user_id,
-        f"💰 Saldo masuk Rp {amount:,.0f}"
-    )
-
 
 # =========================
 # WITHDRAW NOTIFY
 # =========================
-async def notify_withdraw(wd_id: int, user_id: int, amount: int, status: str):
-    await send_group(
-        "💸 <b>WITHDRAW</b>\n"
-        f"WD: {wd_id}\n"
-        f"User: <code>{user_id}</code>\n"
-        f"Amount: Rp {amount:,.0f}\n"
-        f"Status: {status}"
-    )
-
+async def notify_withdraw(user_id: int, amount: int, status: str):
     await send_user(
         user_id,
-        f"Withdraw {status}: Rp {amount:,.0f}"
+        f"💸 Withdraw {status}\nRp {amount:,.0f}"
     )
 
-
-# =========================
-# CODE CREATED
-# =========================
-async def notify_code_created(user_id: int, code: str, price: int):
     await send_group(
-        "🔑 <b>NEW CODE</b>\n"
-        f"User: <code>{user_id}</code>\n"
-        f"Code: <code>{code}</code>\n"
-        f"Price: Rp {price:,.0f}"
+        f"💸 WD {status}\nUser: {user_id}\nAmount: {amount}"
     )
 
 
