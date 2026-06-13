@@ -5,63 +5,49 @@ from datetime import datetime
 
 
 # =========================================================
-# MAINTENANCE STATE (THREAD SAFE + CONSISTENT)
+# GLOBAL STATE (SINGLE SOURCE OF TRUTH)
 # =========================================================
-_maintenance: bool = False
-_lock = asyncio.Lock()
+class State:
+    maintenance: bool = False
+    lock = asyncio.Lock()
 
 
+# =========================================================
+# MAINTENANCE CONTROL (SAFE)
+# =========================================================
 async def set_maintenance(value: bool):
-    """
-    Toggle maintenance mode (async safe)
-    """
-    global _maintenance
-    async with _lock:
-        _maintenance = bool(value)
+    async with State.lock:
+        State.maintenance = bool(value)
 
 
 def is_maintenance() -> bool:
-    """
-    Check maintenance status
-    """
-    return _maintenance
+    return State.maintenance
 
 
 # =========================================================
-# LIVE LOG SYSTEM (HIGH PERFORMANCE BUFFER)
+# LIVE LOG SYSTEM
 # =========================================================
 LOG_BUFFER: deque = deque(maxlen=200)
 
 
 def push_log(text: str, level: str = "info"):
-    """
-    Push log realtime ke admin dashboard + websocket
-    """
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-
     LOG_BUFFER.append({
-        "time": timestamp,
+        "time": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
         "level": level,
         "message": text
     })
 
 
 def get_logs(limit: int = 50) -> List[Dict[str, Any]]:
-    """
-    Ambil log terbaru (untuk websocket / API)
-    """
     return list(LOG_BUFFER)[-limit:]
 
 
 def clear_logs():
-    """
-    Reset semua logs
-    """
     LOG_BUFFER.clear()
 
 
 # =========================================================
-# EVENT TRACKING SYSTEM (REALTIME ANALYTICS)
+# EVENT TRACKING
 # =========================================================
 EVENTS: Dict[str, int] = {
     "payment": 0,
@@ -74,13 +60,7 @@ EVENTS: Dict[str, int] = {
 
 
 def inc_event(name: str, value: int = 1):
-    """
-    Increment event counter
-    """
-    if name in EVENTS:
-        EVENTS[name] += value
-    else:
-        EVENTS[name] = value
+    EVENTS[name] = EVENTS.get(name, 0) + value
 
 
 def get_events() -> Dict[str, int]:
@@ -88,17 +68,13 @@ def get_events() -> Dict[str, int]:
 
 
 # =========================================================
-# LIVE METRICS SNAPSHOT (FOR WEBSOCKET DASHBOARD)
+# SNAPSHOT (FOR WS / DASHBOARD)
 # =========================================================
 def get_state_snapshot(extra: dict | None = None) -> Dict[str, Any]:
-    """
-    Snapshot real-time untuk admin dashboard websocket
-    """
-
     snapshot = {
-        "maintenance": _maintenance,
+        "maintenance": State.maintenance,
         "events": EVENTS,
-        "logs": list(LOG_BUFFER)[-20:],  # last 20 logs
+        "logs": list(LOG_BUFFER)[-20:],
         "timestamp": datetime.utcnow().isoformat()
     }
 
@@ -109,23 +85,17 @@ def get_state_snapshot(extra: dict | None = None) -> Dict[str, Any]:
 
 
 # =========================================================
-# SAFE WRAPPER (ANTI CRASH LOGGER)
+# SAFE WRAPPER
 # =========================================================
 def safe_log(text: str, level: str = "info"):
-    """
-    Logging aman (tidak crash kalau error)
-    """
     try:
         push_log(text, level)
-    except Exception:
+    except:
         pass
 
 
 def safe_event(name: str):
-    """
-    Event tracker aman
-    """
     try:
         inc_event(name)
-    except Exception:
+    except:
         pass
