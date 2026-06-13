@@ -10,6 +10,10 @@ from bot.db.user import save_user
 
 router = Router()
 
+# =========================
+# CONFIG (ONLY 1 CHANNEL)
+# =========================
+CHANNEL = -1004395938795
 
 # =========================
 # UI
@@ -30,7 +34,7 @@ def dashboard_text(user, balance: int):
 
 
 # =========================
-# KEYBOARD (NO REFRESH)
+# HOME KEYBOARD
 # =========================
 def home_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -53,6 +57,26 @@ def home_kb():
 
 
 # =========================
+# JOIN BUTTON (ONLY 1)
+# =========================
+def join_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="📢 Channel Update Link",
+                url="https://t.me/+mp7HeZPteus0ZDQ9"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🔄 Check Join",
+                callback_data="check_join"
+            )
+        ]
+    ])
+
+
+# =========================
 # DB
 # =========================
 async def get_balance(user_id: int):
@@ -68,36 +92,35 @@ async def get_balance(user_id: int):
 
 
 # =========================
-# SAFE DASHBOARD SENDER (AUTO UPDATE CORE)
+# FORCE CHECK (ANTI BYPASS CORE)
 # =========================
-async def send_dashboard(message_or_callback, user):
+async def is_joined(bot, user_id: int) -> bool:
+    try:
+        member = await bot.get_chat_member(CHANNEL, user_id)
+        return member.status in ("member", "administrator", "creator")
+    except:
+        return False
+
+
+# =========================
+# DASHBOARD SENDER (AUTO GATE)
+# =========================
+async def send_dashboard(target, bot, user):
+
+    if not await is_joined(bot, user.id):
+        await target.answer(
+            "⚠️ Kamu harus join Channel dulu",
+            reply_markup=join_kb()
+        )
+        return
+
     balance = await get_balance(user.id)
 
-    text = dashboard_text(user, balance)
-
-    if hasattr(message_or_callback, "message"):
-        # callback
-        msg = message_or_callback.message
-
-        try:
-            await msg.edit_text(
-                text,
-                reply_markup=home_kb(),
-                parse_mode="HTML"
-            )
-        except:
-            await msg.answer(
-                text,
-                reply_markup=home_kb(),
-                parse_mode="HTML"
-            )
-    else:
-        # message
-        await message_or_callback.answer(
-            text,
-            reply_markup=home_kb(),
-            parse_mode="HTML"
-        )
+    await target.answer(
+        dashboard_text(user, balance),
+        reply_markup=home_kb(),
+        parse_mode="HTML"
+    )
 
 
 # =========================
@@ -114,20 +137,38 @@ async def start(message: Message, bot):
 
     asyncio.create_task(save_user(user))
 
-    await send_dashboard(message, user)
+    await send_dashboard(message, bot, user)
 
 
 # =========================
-# AUTO UPDATE ALL CALLBACKS
+# CHECK JOIN BUTTON
 # =========================
-@router.callback_query()
-async def menu_router(callback: CallbackQuery):
+@router.callback_query(F.data == "check_join")
+async def check_join(callback: CallbackQuery, bot):
 
     user = callback.from_user
 
-    if is_maintenance():
-        await callback.answer("⚙️ Maintenance", show_alert=True)
-        return
+    if await is_joined(bot, user.id):
+        await callback.message.edit_text(
+            "✅ Join verified, loading dashboard..."
+        )
 
-    await send_dashboard(callback, user)
-    await callback.answer()
+        await send_dashboard(callback.message, bot, user)
+        await callback.answer()
+
+    else:
+        await callback.answer("❌ Kamu belum join channel", show_alert=True)
+
+
+# =========================
+# AUTO BLOCK IF LEFT (REALTIME SAFE)
+# =========================
+@router.chat_member()
+async def on_chat_member(update, bot):
+
+    user_id = update.from_user.id
+    new_status = update.new_chat_member.status
+
+    # kalau keluar
+    if new_status in ("left", "kicked"):
+        print(f"[LEFT DETECTED] {user_id}")
