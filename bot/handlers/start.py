@@ -179,8 +179,13 @@ async def cek_join(callback: CallbackQuery, bot):
 # =========================
 @router.callback_query(F.data == "home")
 async def home(callback: CallbackQuery):
-    user = callback.from_user
 
+    # 🔴 MAINTENANCE CHECK (TARUH PALING ATAS)
+    if is_maintenance():
+        await callback.answer("⚙️ Bot sedang maintenance", show_alert=True)
+        return
+
+    user = callback.from_user
     balance = await get_balance(user.id)
 
     await callback.message.edit_text(
