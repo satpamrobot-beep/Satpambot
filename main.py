@@ -6,41 +6,52 @@ from fastapi import FastAPI
 
 from bot.loader import bot, dp
 from bot.db.database import init_db
-from bot.handlers import start
-from services.notify import set_bot
+
+from bot.middleware.maintenance import MaintenanceMiddleware
 from bot.web.admin import router as admin_router
+from bot.webhook import router as bayargg_router
+
+from services.notify import set_bot
+from bot.handlers import start
+
 
 # =========================
 # FASTAPI APP
 # =========================
 app = FastAPI()
 
-# =========================
-# WEBHOOK ROUTER
-# =========================
-from bot.webhook import router as bayargg_router
 app.include_router(bayargg_router)
 app.include_router(admin_router)
 
+
 # =========================
-# BOT STARTUP
+# BOT STARTUP HOOK
 # =========================
 async def on_startup():
     await init_db()
+
     set_bot(bot)
+
+    # register handlers
+    dp.include_router(start.router)
+
+    # middleware MUST AFTER router include
+    dp.message.middleware(MaintenanceMiddleware())
+    dp.callback_query.middleware(MaintenanceMiddleware())
+
     print("🤖 Bot ready")
 
 
 # =========================
-# BOT TASK
+# BOT RUNNER
 # =========================
 async def start_bot():
-    dp.include_router(start.router)
+    await on_startup()
     await dp.start_polling(bot)
 
 
 # =========================
-# FASTAPI RUNNER (RAILWAY SAFE)
+# FASTAPI RUNNER
 # =========================
 async def start_api():
     PORT = int(os.getenv("PORT", 8000))
@@ -57,19 +68,14 @@ async def start_api():
 
 
 # =========================
-# MAIN RUNNER
+# MAIN
 # =========================
 async def main():
-    await on_startup()
-
     await asyncio.gather(
         start_bot(),
         start_api()
     )
 
 
-# =========================
-# ENTRY POINT
-# =========================
 if __name__ == "__main__":
     asyncio.run(main())
