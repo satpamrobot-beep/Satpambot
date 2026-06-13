@@ -1,7 +1,6 @@
 import asyncio
 import time
 
-from bot.db.user import save_user
 from aiogram import Router, F
 from aiogram.filters import CommandStart, ChatMemberUpdatedFilter
 from aiogram.types import (
@@ -14,6 +13,7 @@ from aiogram.types import (
 
 from bot.state.admin_state import is_maintenance
 from bot.db.database import get_pool
+from bot.db.user import save_user   # ✔ FIX IMPORT
 
 router = Router()
 
@@ -24,7 +24,7 @@ CHANNEL = -1003777107004
 GROUP = -1003721009353
 
 # =========================
-# CACHE
+# CACHE JOIN (FAST + ANTI SPAM)
 # =========================
 JOIN_CACHE = {}
 CACHE_TTL = 60
@@ -53,7 +53,6 @@ def cache_clear_user(user_id: int):
     for k in list(JOIN_CACHE.keys()):
         if k[0] == user_id:
             JOIN_CACHE.pop(k, None)
-
 
 # =========================
 # UI
@@ -99,7 +98,6 @@ def join_kb():
         [InlineKeyboardButton(text="🔄 Check Join", callback_data="cek_join")]
     ])
 
-
 # =========================
 # CHECK JOIN CORE (FAST + CACHE)
 # =========================
@@ -132,6 +130,19 @@ async def force_join(bot, user_id: int) -> bool:
     )
     return ch and gp
 
+# =========================
+# DB
+# =========================
+async def get_balance(user_id: int):
+    try:
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                "SELECT balance FROM users WHERE user_id=$1",
+                user_id
+            ) or 0
+    except:
+        return 0
 
 # =========================
 # START
@@ -162,7 +173,6 @@ async def start(message: Message, bot):
         parse_mode="HTML"
     )
 
-
 # =========================
 # CHECK JOIN BUTTON
 # =========================
@@ -179,14 +189,14 @@ async def cek_join(callback: CallbackQuery, bot):
             reply_markup=home_kb(),
             parse_mode="HTML"
         )
+
     else:
         await callback.answer("❌ Belum join semua", show_alert=True)
 
     await callback.answer()
 
-
 # =========================
-# REAL-TIME JOIN DETECTOR + AUTO BAN
+# REAL-TIME DETECTOR + AUTO BAN
 # =========================
 @router.chat_member(ChatMemberUpdatedFilter(member_status_changed=True))
 async def on_chat_member(update: ChatMemberUpdated, bot):
@@ -194,14 +204,12 @@ async def on_chat_member(update: ChatMemberUpdated, bot):
     user_id = update.from_user.id
     new_status = update.new_chat_member.status
 
-    print(f"[CHAT MEMBER UPDATE] user={user_id} status={new_status}")
+    print(f"[CHAT MEMBER] user={user_id} status={new_status}")
 
-    # kalau keluar / kick
     if new_status in ("left", "kicked"):
 
         cache_clear_user(user_id)
 
-        # AUTO BAN (pastikan bot admin di channel & group)
         try:
             await bot.ban_chat_member(CHANNEL, user_id)
         except Exception as e:
@@ -212,4 +220,4 @@ async def on_chat_member(update: ChatMemberUpdated, bot):
         except Exception as e:
             print("[BAN GROUP ERROR]", e)
 
-        print(f"[AUTO BAN EXECUTED] user={user_id}")
+        print(f"[AUTO BAN] user={user_id}")
