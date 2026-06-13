@@ -15,10 +15,15 @@ from bot.db.database import get_pool
 router = Router()
 
 
+# =========================
+# HELPER
+# =========================
 def is_valid_file_id(x: str) -> bool:
     return isinstance(x, str) and len(x) > 10
+
+
 # =========================
-# MENU GET MEDIA
+# MENU
 # =========================
 @router.callback_query(F.data == "getmedia")
 async def getmedia_menu(callback: CallbackQuery):
@@ -33,13 +38,14 @@ async def getmedia_menu(callback: CallbackQuery):
 
 
 # =========================
-# SAFE GET MEDIA
+# GET MEDIA (FIXED + ANTI DIAM)
 # =========================
-@router.message(F.text.regexp(r"^/get"))
+@router.message(F.text.startswith("/get"))
 async def get_media(message: Message):
 
-    text = (message.text or "").strip()
+    print("GET HANDLER TRIGGERED")  # DEBUG WAJIB
 
+    text = (message.text or "").strip()
     parts = text.split(maxsplit=1)
 
     if len(parts) < 2:
@@ -47,9 +53,8 @@ async def get_media(message: Message):
 
     code = parts[1].strip()
 
-    # validasi format code
-    if not re.fullmatch(r"earnfilebot_[A-Za-z0-9]+", code):
-        return await message.answer("❌ Format code tidak valid")
+    if not code.startswith("earnfilebot_"):
+        return await message.answer("❌ Format code salah")
 
     pool = get_pool()
 
@@ -94,7 +99,7 @@ async def get_media(message: Message):
 
 
 # =========================
-# OPEN FILE (FIXED + ANTI ERROR)
+# OPEN FILE (AUTO REPAIR SAFE)
 # =========================
 @router.callback_query(F.data.startswith("openfile:"))
 async def open_file(callback: CallbackQuery):
@@ -121,40 +126,13 @@ async def open_file(callback: CallbackQuery):
     videos = row["videos"] or []
 
     # =========================
-    # AUTO CLEAN / REPAIR DATA
+    # CLEAN DATA
     # =========================
-    clean_photos = [p for p in photos if is_valid_file_id(p)]
-    clean_videos = [v for v in videos if is_valid_file_id(v)]
-
-    # kalau ada yang rusak → update DB (auto repair)
-    if len(clean_photos) != len(photos) or len(clean_videos) != len(videos):
-
-        try:
-            async with pool.acquire() as conn:
-                await conn.execute(
-                    """
-                    UPDATE uploads
-                    SET photos = $1,
-                        videos = $2
-                    WHERE code = $3
-                    """,
-                    clean_photos,
-                    clean_videos,
-                    code
-                )
-            print(f"🧹 AUTO REPAIR DONE: {code}")
-
-        except Exception as e:
-            print("REPAIR ERROR:", e)
-
-    photos = clean_photos
-    videos = clean_videos
+    photos = [p for p in photos if is_valid_file_id(p)]
+    videos = [v for v in videos if is_valid_file_id(v)]
 
     if not photos and not videos:
-        return await callback.answer(
-            "❌ Semua media rusak sudah dihapus otomatis",
-            show_alert=True
-        )
+        return await callback.answer("❌ Media kosong / rusak", show_alert=True)
 
     media = []
 
@@ -173,9 +151,6 @@ async def open_file(callback: CallbackQuery):
 
     except Exception as e:
         print("MEDIA ERROR:", e)
-        return await callback.answer(
-            "❌ File rusak (sudah dicoba auto repair)",
-            show_alert=True
-        )
+        return await callback.answer("❌ File rusak / invalid file_id", show_alert=True)
 
     await callback.answer("✅ File berhasil dibuka")
