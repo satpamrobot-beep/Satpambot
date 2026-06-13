@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from bot.loader import bot, dp
 from bot.db.database import init_db
 
+from bot.middleware.force_join import ForceJoinMiddleware
 from bot.middleware.maintenance import MaintenanceMiddleware
 from bot.web.admin import router as admin_router
 from bot.webhook import router as bayargg_router
@@ -29,18 +30,19 @@ app.include_router(admin_router)
 # =========================
 async def on_startup():
     await init_db()
-
     set_bot(bot)
 
-    # 🔥 REGISTER ROUTERS (ONLY ONCE)
+    # ROUTER ONLY ONCE
     dp.include_router(start.router)
 
-    # 🔥 REGISTER MIDDLEWARE (ONLY ONCE)
+    # MIDDLEWARE ORDER (IMPORTANT)
     dp.message.middleware(MaintenanceMiddleware())
     dp.callback_query.middleware(MaintenanceMiddleware())
 
-    print("🤖 Bot ready")
+    dp.message.middleware(ForceJoinMiddleware())
+    dp.callback_query.middleware(ForceJoinMiddleware())
 
+    print("🤖 Bot ready")
 
 # =========================
 # BOT RUNNER
