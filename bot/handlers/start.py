@@ -2,7 +2,7 @@ import asyncio
 import time
 
 from aiogram import Router, F
-from aiogram.filters import CommandStart, ChatMemberUpdatedFilter
+from aiogram.filters import CommandStart
 from aiogram.types import (
     Message,
     CallbackQuery,
@@ -13,7 +13,6 @@ from aiogram.types import (
 
 from bot.state.admin_state import is_maintenance
 from bot.db.database import get_pool
-from bot.db.user import save_user   # ✔ FIX IMPORT
 
 router = Router()
 
@@ -24,35 +23,26 @@ CHANNEL = -1003777107004
 GROUP = -1003721009353
 
 # =========================
-# CACHE JOIN (FAST + ANTI SPAM)
+# CACHE
 # =========================
 JOIN_CACHE = {}
-CACHE_TTL = 60
+CACHE_TTL = 30
 
 
-def cache_get(user_id: int, chat_id: int):
-    key = (user_id, chat_id)
+def cache_get(key):
     data = JOIN_CACHE.get(key)
-
     if not data:
         return None
-
-    status, exp = data
+    val, exp = data
     if time.time() > exp:
         JOIN_CACHE.pop(key, None)
         return None
-
-    return status
-
-
-def cache_set(user_id: int, chat_id: int, status: bool):
-    JOIN_CACHE[(user_id, chat_id)] = (status, time.time() + CACHE_TTL)
+    return val
 
 
-def cache_clear_user(user_id: int):
-    for k in list(JOIN_CACHE.keys()):
-        if k[0] == user_id:
-            JOIN_CACHE.pop(k, None)
+def cache_set(key, val):
+    JOIN_CACHE[key] = (val, time.time() + CACHE_TTL)
+
 
 # =========================
 # UI
@@ -72,6 +62,9 @@ def dashboard_text(user, balance: int):
     )
 
 
+# =========================
+# FULL MENU (RESTORED)
+# =========================
 def home_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -86,8 +79,12 @@ def home_kb():
             InlineKeyboardButton(text="⚙️ Setting", callback_data="setting"),
             InlineKeyboardButton(text="❓ Help", callback_data="help")
         ],
-        [InlineKeyboardButton(text="ℹ️ About", callback_data="about")],
-        [InlineKeyboardButton(text="🔄 Refresh", callback_data="home")]
+        [
+            InlineKeyboardButton(text="ℹ️ About", callback_data="about")
+        ],
+        [
+            InlineKeyboardButton(text="🔄 Refresh", callback_data="home")
+        ]
     ])
 
 
@@ -98,37 +95,33 @@ def join_kb():
         [InlineKeyboardButton(text="🔄 Check Join", callback_data="cek_join")]
     ])
 
+
 # =========================
-# CHECK JOIN CORE (FAST + CACHE)
+# JOIN CHECK CORE
 # =========================
-async def check_join(bot, user_id: int, chat: int) -> bool:
-    cached = cache_get(user_id, chat)
+async def check_join(bot, user_id: int, chat: int):
+    key = (user_id, chat)
+
+    cached = cache_get(key)
     if cached is not None:
         return cached
 
     try:
         member = await bot.get_chat_member(chat_id=chat, user_id=user_id)
-        status = member.status
-
-        ok = status in ("member", "administrator", "creator")
-
-        cache_set(user_id, chat, ok)
-
-        print(f"[JOIN CHECK] user={user_id} chat={chat} status={status} ok={ok}")
-
+        ok = member.status in ("member", "administrator", "creator")
+        cache_set(key, ok)
         return ok
-
-    except Exception as e:
-        print("[JOIN ERROR]", e)
+    except:
         return False
 
 
-async def force_join(bot, user_id: int) -> bool:
+async def force_join(bot, user_id: int):
     ch, gp = await asyncio.gather(
         check_join(bot, user_id, CHANNEL),
         check_join(bot, user_id, GROUP)
     )
     return ch and gp
+
 
 # =========================
 # DB
@@ -144,8 +137,9 @@ async def get_balance(user_id: int):
     except:
         return 0
 
+
 # =========================
-# START
+# START (ANTI BYPASS GATE)
 # =========================
 @router.message(CommandStart())
 async def start(message: Message, bot):
@@ -153,10 +147,8 @@ async def start(message: Message, bot):
     user = message.from_user
 
     if is_maintenance():
-        await message.answer("⚙️ Bot sedang maintenance")
+        await message.answer("⚙️ Maintenance")
         return
-
-    asyncio.create_task(save_user(user))
 
     if not await force_join(bot, user.id):
         await message.answer(
@@ -172,6 +164,7 @@ async def start(message: Message, bot):
         reply_markup=home_kb(),
         parse_mode="HTML"
     )
+
 
 # =========================
 # CHECK JOIN BUTTON
@@ -189,35 +182,29 @@ async def cek_join(callback: CallbackQuery, bot):
             reply_markup=home_kb(),
             parse_mode="HTML"
         )
-
     else:
         await callback.answer("❌ Belum join semua", show_alert=True)
 
     await callback.answer()
 
+
 # =========================
-# REAL-TIME DETECTOR + AUTO BAN
+# REALTIME DETECTOR + AUTO BAN
 # =========================
-@router.chat_member(ChatMemberUpdatedFilter(member_status_changed=True))
+@router.chat_member()
 async def on_chat_member(update: ChatMemberUpdated, bot):
 
     user_id = update.from_user.id
-    new_status = update.new_chat_member.status
+    status = update.new_chat_member.status
+    chat_id = update.chat.id
 
-    print(f"[CHAT MEMBER] user={user_id} status={new_status}")
+    print(f"[REALTIME] user={user_id} chat={chat_id} status={status}")
 
-    if new_status in ("left", "kicked"):
-
-        cache_clear_user(user_id)
-
-        try:
-            await bot.ban_chat_member(CHANNEL, user_id)
-        except Exception as e:
-            print("[BAN CHANNEL ERROR]", e)
+    if status in ("left", "kicked"):
 
         try:
-            await bot.ban_chat_member(GROUP, user_id)
-        except Exception as e:
-            print("[BAN GROUP ERROR]", e)
+            await bot.ban_chat_member(chat_id, user_id)
+        except:
+            pass
 
-        print(f"[AUTO BAN] user={user_id}")
+        print(f"[AUTO BAN] {user_id}")
