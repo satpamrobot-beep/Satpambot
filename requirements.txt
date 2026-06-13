@@ -1,5 +1,0 @@
-aiogram==3.*
-asyncpg
-python-dotenv
-fastapi
-uvicorn[standard]
