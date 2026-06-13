@@ -7,7 +7,6 @@ from fastapi import FastAPI
 from bot.loader import bot, dp
 from bot.db.database import init_db
 
-from bot.middleware.force_join import ForceJoinMiddleware
 from bot.middleware.maintenance import MaintenanceMiddleware
 from bot.web.admin import router as admin_router
 from bot.webhook import router as bayargg_router
