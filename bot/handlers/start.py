@@ -30,7 +30,7 @@ USER_JOIN_LOG = defaultdict(list)  # user_id -> timestamps
 SUSPICIOUS_USERS = set()
 
 JOIN_LIMIT_WINDOW = 60  # detik
-JOIN_LIMIT_MAX = 5      # max join/leave event dalam window
+JOIN_LIMIT_MAX = 10     # max join/leave event dalam window
 
 
 # =========================
