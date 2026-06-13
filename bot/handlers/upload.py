@@ -1,9 +1,15 @@
+import json
 import secrets
 import string
 import time
 
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton
+)
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 
@@ -38,7 +44,8 @@ def new_session():
         "chat_id": None,
         "finished": False,
         "last_update": 0,
-        "processing": False,  # 🔥 simple lock (lebih aman dari asyncio.Lock di dict)
+        "processing": False,
+        "saving": False,
     }
 
 
@@ -46,41 +53,71 @@ def new_session():
 # KEYBOARD
 # =========================
 def upload_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="✅ DONE", callback_data="up_done"),
-            InlineKeyboardButton(text="❌ CANCEL", callback_data="up_cancel")
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ DONE",
+                    callback_data="up_done"
+                ),
+                InlineKeyboardButton(
+                    text="❌ CANCEL",
+                    callback_data="up_cancel"
+                ),
+            ]
         ]
-    ])
+    )
 
 
 def mode_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🆓 FREE", callback_data="up_free"),
-            InlineKeyboardButton(text="💰 PAYMENT", callback_data="up_pay")
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🆓 FREE",
+                    callback_data="up_free"
+                ),
+                InlineKeyboardButton(
+                    text="💰 PAYMENT",
+                    callback_data="up_pay"
+                ),
+            ]
         ]
-    ])
+    )
 
 
 def share_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🔓 SHARE", callback_data="up_share"),
-            InlineKeyboardButton(text="🔒 NO SHARE", callback_data="up_noshare")
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🔓 SHARE",
+                    callback_data="up_share"
+                ),
+                InlineKeyboardButton(
+                    text="🔒 NO SHARE",
+                    callback_data="up_noshare"
+                ),
+            ]
         ]
-    ])
+    )
 
 
 def save_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="💾 SAVE", callback_data="up_save"),
-            InlineKeyboardButton(text="❌ CANCEL", callback_data="up_cancel")
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💾 SAVE",
+                    callback_data="up_save"
+                ),
+                InlineKeyboardButton(
+                    text="❌ CANCEL",
+                    callback_data="up_cancel"
+                ),
+            ]
         ]
-    ])
-
-
+    )
 # =========================
 # CODE
 # =========================
@@ -120,182 +157,459 @@ async def collect_media(message: Message):
     uid = message.from_user.id
     s = SESSIONS.get(uid)
 
-    if not s or s["finished"]:
+    if not s:
         return
 
-    # 🔥 ANTI PARALLEL EXECUTION
-    if s["processing"]:
+    if s.get("finished"):
         return
 
-    s["processing"] = True
+    # SAVE MEDIA
+    if message.photo:
+
+        file_id = message.photo[-1].file_id
+
+        if file_id not in s["photos"]:
+            s["photos"].append(file_id)
+
+    elif message.video:
+
+        file_id = message.video.file_id
+
+        if file_id not in s["videos"]:
+            s["videos"].append(file_id)
+
+    photo_count = len(s["photos"])
+    video_count = len(s["videos"])
+    total = photo_count + video_count
+
+    # DELETE USER MESSAGE
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    # UPDATE UI MAX 4x/DETIK
+    now = time.time()
+
+    if now - s.get("last_update", 0) < 0.25:
+        return
+
+    s["last_update"] = now
+
+    msg_id = s.get("msg_id")
+    chat_id = s.get("chat_id")
+
+    if not msg_id or not chat_id:
+        return
 
     try:
-        now = time.time()
-
-        # 🔥 anti spam update
-        if now - s["last_update"] < 0.25:
-            return
-        s["last_update"] = now
-
-        # SAVE MEDIA
-        if message.photo:
-            file_id = message.photo[-1].file_id
-            if file_id not in s["photos"]:
-                s["photos"].append(file_id)
-
-        elif message.video:
-            file_id = message.video.file_id
-            if file_id not in s["videos"]:
-                s["videos"].append(file_id)
-
-        total = len(s["photos"]) + len(s["videos"])
-
-        # delete user message
-        try:
-            await message.delete()
-        except:
-            pass
-
-        text = (
-            "📥 RECEIVED\n"
-            f"📸 Photo: {len(s['photos'])}\n"
-            f"🎥 Video: {len(s['videos'])}\n"
-            f"📦 Total: {total}"
+        await message.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=msg_id,
+            text=(
+                "📥 RECEIVED\n\n"
+                f"📸 Photo : {photo_count}\n"
+                f"🎥 Video : {video_count}\n"
+                f"📦 Total : {total}\n\n"
+                "Tekan DONE jika selesai upload."
+            ),
+            reply_markup=upload_kb()
         )
 
-        if s.get("msg_id") and s.get("chat_id"):
-            try:
-                await message.bot.edit_message_text(
-                    chat_id=s["chat_id"],
-                    message_id=s["msg_id"],
-                    text=text,
-                    reply_markup=upload_kb()
-                )
-            except:
-                pass
-
-    finally:
-        s["processing"] = False
-
-
+    except Exception:
+        pass
 # =========================
 # DONE
 # =========================
 @router.callback_query(F.data == "up_done")
 async def done(callback: CallbackQuery, state: FSMContext):
 
-    s = SESSIONS.get(callback.from_user.id)
+    uid = callback.from_user.id
+    s = SESSIONS.get(uid)
+
     if not s:
-        return await callback.answer("Session expired", show_alert=True)
+        return await callback.answer(
+            "Session expired",
+            show_alert=True
+        )
+
+    # anti spam click
+    if s.get("finished"):
+        return await callback.answer()
+
+    total = len(s["photos"]) + len(s["videos"])
+
+    if total == 0:
+        return await callback.answer(
+            "Upload media terlebih dahulu",
+            show_alert=True
+        )
 
     s["finished"] = True
-    await state.set_state(UploadState.payment_input)
 
-    await callback.message.edit_text(
-        "⚙️ PILIH MODE",
-        reply_markup=mode_kb()
-    )
+    try:
+        await callback.message.edit_text(
+            "⚙️ PILIH MODE\n\n"
+            f"📸 Photo : {len(s['photos'])}\n"
+            f"🎥 Video : {len(s['videos'])}\n"
+            f"📦 Total : {total}\n\n"
+            "Pilih metode file:",
+            reply_markup=mode_kb()
+        )
+    except Exception:
+        pass
 
     await callback.answer()
-
-
 # =========================
 # FREE / PAY / SHARE (UNCHANGED CORE)
 # =========================
 @router.callback_query(F.data == "up_free")
 async def free(callback: CallbackQuery):
-    SESSIONS[callback.from_user.id]["mode"] = "free"
-    await callback.message.edit_text("🔓 SHARE TYPE", reply_markup=share_kb())
+
+    uid = callback.from_user.id
+    s = SESSIONS.get(uid)
+
+    if not s:
+        return await callback.answer(
+            "Session expired",
+            show_alert=True
+        )
+
+    if s.get("saving"):
+        return await callback.answer()
+
+    s["mode"] = "free"
+    s["payment"] = 0
+
+    try:
+        await callback.message.edit_text(
+            "🔓 PILIH SHARE TYPE\n\n"
+            "Pilih apakah file dapat dibagikan ulang atau tidak.",
+            reply_markup=share_kb()
+        )
+    except Exception:
+        pass
+
     await callback.answer()
+
+@router.message(UploadState.payment_input)
+async def payment_input(message: Message, state: FSMContext):
+
+    uid = message.from_user.id
+    s = SESSIONS.get(uid)
+
+    if not s:
+        return
+
+    text = (message.text or "").strip()
+
+    if not text.isdigit():
+        return await message.answer(
+            "❌ Nominal harus berupa angka"
+        )
+
+    amount = int(text)
+
+    if amount < 1:
+        return await message.answer(
+            "❌ Nominal minimal Rp 1"
+        )
+
+    s["payment"] = amount
+
+    try:
+        await message.delete()
+    except:
+        pass
+
+    await state.clear()
+
+    if s.get("chat_id") and s.get("msg_id"):
+        try:
+            await message.bot.edit_message_text(
+                chat_id=s["chat_id"],
+                message_id=s["msg_id"],
+                text=(
+                    "🔓 PILIH SHARE TYPE\n\n"
+                    f"💰 Harga: Rp {amount:,}"
+                ),
+                reply_markup=share_kb()
+            )
+        except:
+            pass
 
 
 @router.callback_query(F.data == "up_pay")
 async def pay(callback: CallbackQuery, state: FSMContext):
-    SESSIONS[callback.from_user.id]["mode"] = "payment"
-    await state.set_state(UploadState.payment_input)
-    await callback.message.edit_text("💰 INPUT NOMINAL")
+
+    uid = callback.from_user.id
+    s = SESSIONS.get(uid)
+
+    if not s:
+        return await callback.answer(
+            "Session expired",
+            show_alert=True
+        )
+
+    if s.get("saving"):
+        return await callback.answer()
+
+    s["mode"] = "payment"
+    s["payment"] = 0
+
+    await state.set_state(
+        UploadState.payment_input
+    )
+
+    await callback.message.edit_text(
+        "💰 INPUT NOMINAL\n\n"
+        "Masukkan harga file dalam angka.\n"
+        "Contoh: 5000"
+    )
+
     await callback.answer()
 
 
 @router.callback_query(F.data == "up_share")
 async def share(callback: CallbackQuery):
-    SESSIONS[callback.from_user.id]["share"] = "share"
-    await callback.message.edit_text("💾 READY SAVE", reply_markup=save_kb())
-    await callback.answer()
 
+    uid = callback.from_user.id
+    s = SESSIONS.get(uid)
+
+    if not s:
+        return await callback.answer(
+            "Session expired",
+            show_alert=True
+        )
+
+    s["share"] = "share"
+
+    await callback.message.edit_text(
+        "💾 READY SAVE\n\n"
+        "🔓 Share : Diizinkan",
+        reply_markup=save_kb()
+    )
+
+    await callback.answer()
 
 @router.callback_query(F.data == "up_noshare")
 async def noshare(callback: CallbackQuery):
-    SESSIONS[callback.from_user.id]["share"] = "no_share"
-    await callback.message.edit_text("💾 READY SAVE", reply_markup=save_kb())
+
+    uid = callback.from_user.id
+    s = SESSIONS.get(uid)
+
+    if not s:
+        return await callback.answer(
+            "Session expired",
+            show_alert=True
+        )
+
+    s["share"] = "no_share"
+
+    await callback.message.edit_text(
+        "💾 READY SAVE\n\n"
+        "🔒 Share : Tidak Diizinkan",
+        reply_markup=save_kb()
+    )
+
     await callback.answer()
-
-
 # =========================
 # SAVE (SAFE + CLEAN)
 # =========================
 @router.callback_query(F.data == "up_save")
-async def save(callback: CallbackQuery):
+async def save(callback: CallbackQuery, state: FSMContext):
 
     uid = callback.from_user.id
     user = callback.from_user
+
     s = SESSIONS.get(uid)
 
     if not s:
-        return await callback.answer("Session expired", show_alert=True)
-
-    code = generate_code()
-
-    pool = get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute("""
-            INSERT INTO uploads (
-                user_id, code,
-                photos, videos,
-                mode, payment, share_type
-            )
-            VALUES ($1,$2,$3,$4,$5,$6,$7)
-        """,
-        uid, code,
-        s["photos"],
-        s["videos"],
-        s["mode"],
-        s["payment"],
-        s["share"]
+        return await callback.answer(
+            "❌ Session expired",
+            show_alert=True
         )
 
-    username = f"@{user.username}" if user.username else user.full_name
+    # Anti spam save
+    if s.get("saving"):
+        return await callback.answer(
+            "⏳ Sedang menyimpan...",
+            show_alert=True
+        )
 
-    post_text = (
-        "📦 <b>NEW MARKET ITEM</b>\n"
-        "━━━━━━━━━━━━━━\n\n"
-        f"🔑 Code: <code>{code}</code>\n"
-        f"👤 Creator: {username}\n"
-        f"📸 Photos: {len(s['photos'])}\n"
-        f"🎥 Videos: {len(s['videos'])}\n"
-        f"💰 Price: {s['payment']}\n"
-        f"🔐 Share: {s['share']}\n"
-        "━━━━━━━━━━━━━━"
-    )
+    s["saving"] = True
 
     try:
-        await callback.bot.send_message(
-            chat_id=CHANNEL_ID,
-            text=post_text,
-            parse_mode="HTML"
+
+        # =========================
+        # VALIDATION
+        # =========================
+
+        if not s.get("mode"):
+            return await callback.answer(
+                "❌ Pilih mode terlebih dahulu",
+                show_alert=True
+            )
+
+        if not s.get("share"):
+            return await callback.answer(
+                "❌ Pilih share type terlebih dahulu",
+                show_alert=True
+            )
+
+        photo_count = len(s["photos"])
+        video_count = len(s["videos"])
+        total = photo_count + video_count
+
+        if total == 0:
+            return await callback.answer(
+                "❌ Media kosong",
+                show_alert=True
+            )
+
+        if (
+            s["mode"] == "payment"
+            and s["payment"] <= 0
+        ):
+            return await callback.answer(
+                "❌ Nominal belum diisi",
+                show_alert=True
+            )
+
+        # =========================
+        # FORMAT TEXT
+        # =========================
+
+        price_text = (
+            "FREE"
+            if s["mode"] == "free"
+            else f"Rp {s['payment']:,}"
         )
-    except Exception as e:
-        print("POST ERROR:", e)
 
-    SESSIONS.pop(uid, None)
+        share_text = (
+            "SHARE"
+            if s["share"] == "share"
+            else "NO SHARE"
+        )
 
-    await callback.message.edit_text(
-        f"✅ SUCCESS\n\nCODE: {code}\n📤 Posted to marketplace"
-    )
+        username = (
+            f"@{user.username}"
+            if user.username
+            else user.full_name
+        )
 
-    await callback.answer()
+        code = generate_code()
 
+        # =========================
+        # SAVE DATABASE
+        # =========================
 
+        pool = get_pool()
+
+        try:
+
+            async with pool.acquire() as conn:
+
+                await conn.execute(
+                    """
+                    INSERT INTO uploads (
+                        user_id,
+                        code,
+                        photos,
+                        videos,
+                        mode,
+                        payment,
+                        share_type,
+                        created_at
+                    )
+                    VALUES (
+                        $1,
+                        $2,
+                        $3::jsonb,
+                        $4::jsonb,
+                        $5,
+                        $6,
+                        $7,
+                        NOW()
+                    )
+                    """,
+                    uid,
+                    code,
+                    json.dumps(s["photos"]),
+                    json.dumps(s["videos"]),
+                    s["mode"],
+                    s["payment"],
+                    s["share"]
+                )
+
+        except Exception as e:
+
+            print("DB ERROR:", e)
+
+            return await callback.answer(
+                "❌ Database error",
+                show_alert=True
+            )
+
+        # =========================
+        # MARKETPLACE POST
+        # =========================
+
+        try:
+
+            await callback.bot.send_message(
+                chat_id=CHANNEL_ID,
+                text=(
+                    "📦 <b>NEW MARKET ITEM</b>\n"
+                    "━━━━━━━━━━━━━━\n\n"
+                    f"🔑 Code: <code>{code}</code>\n"
+                    f"👤 Creator: {username}\n"
+                    f"📸 Photos: {photo_count}\n"
+                    f"🎥 Videos: {video_count}\n"
+                    f"💰 Price: {price_text}\n"
+                    f"🔐 Share: {share_text}\n\n"
+                    f"📅 Created: {time.strftime('%d/%m/%Y %H:%M')}\n"
+                    "━━━━━━━━━━━━━━"
+                ),
+                parse_mode="HTML"
+            )
+
+        except Exception as e:
+            print("POST ERROR:", e)
+
+        # =========================
+        # CLEAR SESSION
+        # =========================
+
+        SESSIONS.pop(uid, None)
+
+        await state.clear()
+
+        try:
+
+            await callback.message.edit_text(
+                "🎉 SUCCESS SAVE\n\n"
+                f"🔑 CODE : {code}\n"
+                f"📸 PHOTO : {photo_count}\n"
+                f"🎥 VIDEO : {video_count}\n"
+                f"💰 PRICE : {price_text}\n"
+                f"🔐 SHARE : {share_text}\n\n"
+                "📤 Posted to marketplace"
+            )
+
+        except Exception:
+            pass
+
+        await callback.answer(
+            "✅ Berhasil disimpan"
+        )
+
+    finally:
+
+        session = SESSIONS.get(uid)
+
+        if session:
+            session["saving"] = False
 # =========================
 # CANCEL
 # =========================
