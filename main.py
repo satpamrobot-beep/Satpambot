@@ -14,6 +14,7 @@ from bot.webhook import router as bayargg_router
 
 from bot.handlers import start
 from bot.handlers import upload
+from bot.handlers import getmedia
 
 
 # =========================
@@ -36,6 +37,7 @@ async def on_startup():
     # =========================
     dp.include_router(start.router)
     dp.include_router(upload.router)
+    dp.include_router(getmedia.router)
 
     # =========================
     # MIDDLEWARE (SAFE)
