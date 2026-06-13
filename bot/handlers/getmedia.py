@@ -33,7 +33,6 @@ async def getmedia_menu(callback: CallbackQuery):
 # =========================
 # GET CODE (FIXED SAFE VERSION)
 # =========================
-import re
 
 @router.message(F.text)
 async def get_media(message: Message):
