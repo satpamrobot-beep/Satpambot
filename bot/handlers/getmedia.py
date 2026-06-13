@@ -114,7 +114,6 @@ async def open_file(callback: CallbackQuery):
                 "SELECT * FROM uploads WHERE code=$1",
                 code
             )
-
     except Exception as e:
         print("OPEN DB ERROR:", e)
         return await callback.answer("❌ Database error", show_alert=True)
@@ -122,35 +121,27 @@ async def open_file(callback: CallbackQuery):
     if not row:
         return await callback.answer("❌ File tidak ditemukan", show_alert=True)
 
-    photos = row["photos"] or []
-    videos = row["videos"] or []
+    photos = normalize_list(row["photos"])
+    videos = normalize_list(row["videos"])
 
-    # =========================
-    # CLEAN DATA
-    # =========================
-    photos = [p for p in photos if is_valid_file_id(p)]
-    videos = [v for v in videos if is_valid_file_id(v)]
+    clean_photos = [x for x in photos if isinstance(x, str) and len(x) > 20]
+    clean_videos = [x for x in videos if isinstance(x, str) and len(x) > 20]
 
-    if not photos and not videos:
+    if not clean_photos and not clean_videos:
         return await callback.answer("❌ Media kosong / rusak", show_alert=True)
 
-    media = []
-
-    for photo in photos:
-        media.append(InputMediaPhoto(media=photo))
-
-    for video in videos:
-        media.append(InputMediaVideo(media=video))
+    media = [
+        InputMediaPhoto(m) for m in clean_photos
+    ] + [
+        InputMediaVideo(m) for m in clean_videos
+    ]
 
     try:
-        while media:
-            chunk = media[:10]
-            media = media[10:]
-
-            await callback.message.answer_media_group(media=chunk)
+        for i in range(0, len(media), 10):
+            await callback.message.answer_media_group(media=media[i:i+10])
 
     except Exception as e:
         print("MEDIA ERROR:", e)
-        return await callback.answer("❌ File rusak / invalid file_id", show_alert=True)
+        return await callback.answer("❌ File rusak", show_alert=True)
 
     await callback.answer("✅ File berhasil dibuka")
