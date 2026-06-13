@@ -33,39 +33,32 @@ async def getmedia_menu(callback: CallbackQuery):
 # =========================
 # GET CODE (FIXED SAFE VERSION)
 # =========================
-@router.message(F.text.regexp(r"^/get"))
+import re
+
+@router.message(F.text)
 async def get_media(message: Message):
 
     text = (message.text or "").strip()
 
-    parts = text.split(maxsplit=1)
+    # cari code di mana saja dalam pesan
+    match = re.search(r"earnfilebot_[A-Za-z0-9]+", text)
 
-    if len(parts) < 2:
-        return await message.answer(
-            "❌ Contoh:\n/get earnfilebot_xxxxx"
-        )
+    if not match:
+        return  # jangan spam reply (biar gak ganggu chat lain)
 
-    code = parts[1].strip()
-
-    # validasi format code
-    if not re.fullmatch(r"earnfilebot_[A-Za-z0-9]+", code):
-        return await message.answer("❌ Format code tidak valid")
+    code = match.group(0)
 
     pool = get_pool()
 
     try:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                """
-                SELECT *
-                FROM uploads
-                WHERE code=$1
-                """,
+                "SELECT * FROM uploads WHERE code=$1",
                 code
             )
 
     except Exception as e:
-        print("GET DB ERROR:", e)
+        print("DB ERROR:", e)
         return await message.answer("❌ Database error")
 
     if not row:
@@ -73,9 +66,6 @@ async def get_media(message: Message):
 
     photos = row["photos"] or []
     videos = row["videos"] or []
-
-    photo_count = len(photos)
-    video_count = len(videos)
 
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -89,18 +79,15 @@ async def get_media(message: Message):
     )
 
     await message.answer(
-        (
-            "📦 FILE FOUND\n\n"
-            f"🔑 CODE : {code}\n"
-            f"📸 PHOTO : {photo_count}\n"
-            f"🎥 VIDEO : {video_count}\n"
-            f"📦 TOTAL : {photo_count + video_count}\n\n"
-            f"💰 MODE : {row['mode']}"
-        ),
+        f"""📦 FILE FOUND
+
+🔑 CODE : {code}
+📸 PHOTO : {len(photos)}
+🎥 VIDEO : {len(videos)}
+📦 TOTAL : {len(photos)+len(videos)}
+💰 MODE : {row['mode']}""",
         reply_markup=kb
     )
-
-
 # =========================
 # OPEN FILE
 # =========================
