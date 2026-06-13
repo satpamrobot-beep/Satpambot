@@ -92,7 +92,7 @@ def home_kb():
 
 def join_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📢 Join Channel", url="https://t.me/Earnfilech")],
+        [InlineKeyboardButton(text="📢 Join Channel", url="https://t.me/+pGH77U2t6_45NTU1")],
         [InlineKeyboardButton(text="👥 Join Group", url="https://t.me/+DTL9cOR34ipmM2U1")],
         [InlineKeyboardButton(text="🔄 Check Join", callback_data="cek_join")]
     ])
