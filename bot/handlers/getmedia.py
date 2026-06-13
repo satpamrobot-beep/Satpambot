@@ -31,21 +31,23 @@ async def getmedia_menu(callback: CallbackQuery):
 
 
 # =========================
-# GET CODE (FIXED SAFE VERSION)
+# SAFE GET MEDIA
 # =========================
-
-@router.message(F.text)
+@router.message(F.text.regexp(r"^/get"))
 async def get_media(message: Message):
 
     text = (message.text or "").strip()
 
-    # cari code di mana saja dalam pesan
-    match = re.search(r"earnfilebot_[A-Za-z0-9]+", text)
+    parts = text.split(maxsplit=1)
 
-    if not match:
-        return  # jangan spam reply (biar gak ganggu chat lain)
+    if len(parts) < 2:
+        return await message.answer("❌ Contoh:\n/get earnfilebot_xxxxx")
 
-    code = match.group(0)
+    code = parts[1].strip()
+
+    # validasi format code
+    if not re.fullmatch(r"earnfilebot_[A-Za-z0-9]+", code):
+        return await message.answer("❌ Format code tidak valid")
 
     pool = get_pool()
 
@@ -87,8 +89,10 @@ async def get_media(message: Message):
 💰 MODE : {row['mode']}""",
         reply_markup=kb
     )
+
+
 # =========================
-# OPEN FILE
+# OPEN FILE (FIXED + ANTI ERROR)
 # =========================
 @router.callback_query(F.data.startswith("openfile:"))
 async def open_file(callback: CallbackQuery):
@@ -100,11 +104,7 @@ async def open_file(callback: CallbackQuery):
     try:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                """
-                SELECT *
-                FROM uploads
-                WHERE code=$1
-                """,
+                "SELECT * FROM uploads WHERE code=$1",
                 code
             )
 
@@ -113,13 +113,22 @@ async def open_file(callback: CallbackQuery):
         return await callback.answer("❌ Database error", show_alert=True)
 
     if not row:
-        return await callback.answer(
-            "❌ File tidak ditemukan",
-            show_alert=True
-        )
+        return await callback.answer("❌ File tidak ditemukan", show_alert=True)
 
     photos = row["photos"] or []
     videos = row["videos"] or []
+
+    # =========================
+    # FILTER VALID FILE_ID
+    # =========================
+    def valid_file_id(x):
+        return isinstance(x, str) and len(x) > 10
+
+    photos = [p for p in photos if valid_file_id(p)]
+    videos = [v for v in videos if valid_file_id(v)]
+
+    if not photos and not videos:
+        return await callback.answer("❌ Media rusak / kosong", show_alert=True)
 
     media = []
 
@@ -129,16 +138,21 @@ async def open_file(callback: CallbackQuery):
     for video in videos:
         media.append(InputMediaVideo(media=video))
 
-    if not media:
+    # =========================
+    # SEND SAFE BATCH
+    # =========================
+    try:
+        while media:
+            chunk = media[:10]
+            media = media[10:]
+
+            await callback.message.answer_media_group(media=chunk)
+
+    except Exception as e:
+        print("MEDIA ERROR:", e)
         return await callback.answer(
-            "❌ Media kosong",
+            "❌ File ada yang rusak (file_id invalid)",
             show_alert=True
         )
-
-    while media:
-        chunk = media[:10]
-        media = media[10:]
-
-        await callback.message.answer_media_group(media=chunk)
 
     await callback.answer("✅ File berhasil dibuka")
