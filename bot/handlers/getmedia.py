@@ -14,6 +14,17 @@ from bot.db.database import get_pool
 
 router = Router()
 
+@router.callback_query(F.data == "getmedia")
+async def getmedia_menu(callback: CallbackQuery):
+
+    await callback.message.edit_text(
+        "📥 GET MEDIA\n\n"
+        "Kirim kode:\n\n"
+        "/get earnfilebot_xxxxx"
+    )
+
+    await callback.answer()
+
 
 # =========================
 # GET CODE
