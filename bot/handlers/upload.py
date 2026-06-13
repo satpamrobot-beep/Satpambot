@@ -435,17 +435,11 @@ async def save(callback: CallbackQuery, state: FSMContext):
     s = SESSIONS.get(uid)
 
     if not s:
-        return await callback.answer(
-            "❌ Session expired",
-            show_alert=True
-        )
+        return await callback.answer("❌ Session expired", show_alert=True)
 
-    # Anti spam save
+    # anti double click / race condition
     if s.get("saving"):
-        return await callback.answer(
-            "⏳ Sedang menyimpan...",
-            show_alert=True
-        )
+        return await callback.answer("⏳ Sedang menyimpan...", show_alert=True)
 
     s["saving"] = True
 
@@ -454,72 +448,41 @@ async def save(callback: CallbackQuery, state: FSMContext):
         # =========================
         # VALIDATION
         # =========================
-
         if not s.get("mode"):
-            return await callback.answer(
-                "❌ Pilih mode terlebih dahulu",
-                show_alert=True
-            )
+            return await callback.answer("❌ Pilih mode terlebih dahulu", show_alert=True)
 
         if not s.get("share"):
-            return await callback.answer(
-                "❌ Pilih share type terlebih dahulu",
-                show_alert=True
-            )
+            return await callback.answer("❌ Pilih share type terlebih dahulu", show_alert=True)
 
-        photo_count = len(s["photos"])
-        video_count = len(s["videos"])
+        photos = list(dict.fromkeys(s["photos"]))  # anti duplicate
+        videos = list(dict.fromkeys(s["videos"]))  # anti duplicate
+
+        photo_count = len(photos)
+        video_count = len(videos)
         total = photo_count + video_count
 
         if total == 0:
-            return await callback.answer(
-                "❌ Media kosong",
-                show_alert=True
-            )
+            return await callback.answer("❌ Media kosong", show_alert=True)
 
-        if (
-            s["mode"] == "payment"
-            and s["payment"] <= 0
-        ):
-            return await callback.answer(
-                "❌ Nominal belum diisi",
-                show_alert=True
-            )
+        if s["mode"] == "payment" and s["payment"] <= 0:
+            return await callback.answer("❌ Nominal belum diisi", show_alert=True)
 
         # =========================
-        # FORMAT TEXT
+        # FORMAT
         # =========================
+        price_text = "FREE" if s["mode"] == "free" else f"Rp {s['payment']:,}"
+        share_text = "SHARE" if s["share"] == "share" else "NO SHARE"
 
-        price_text = (
-            "FREE"
-            if s["mode"] == "free"
-            else f"Rp {s['payment']:,}"
-        )
-
-        share_text = (
-            "SHARE"
-            if s["share"] == "share"
-            else "NO SHARE"
-        )
-
-        username = (
-            f"@{user.username}"
-            if user.username
-            else user.full_name
-        )
-
+        username = f"@{user.username}" if user.username else user.full_name
         code = generate_code()
-
-        # =========================
-        # SAVE DATABASE
-        # =========================
 
         pool = get_pool()
 
+        # =========================
+        # SAVE DB (FIX FINAL)
+        # =========================
         try:
-
             async with pool.acquire() as conn:
-
                 await conn.execute(
                     """
                     INSERT INTO uploads (
@@ -533,40 +496,26 @@ async def save(callback: CallbackQuery, state: FSMContext):
                         created_at
                     )
                     VALUES (
-                        $1,
-                        $2,
-                        $3::jsonb,
-                        $4::jsonb,
-                        $5,
-                        $6,
-                        $7,
-                        NOW()
+                        $1, $2, $3, $4, $5, $6, $7, NOW()
                     )
                     """,
                     uid,
                     code,
-                    s["photos"]),
-                    s["videos"]),
+                    photos,
+                    videos,
                     s["mode"],
                     s["payment"],
                     s["share"]
                 )
 
         except Exception as e:
-
             print("DB ERROR:", e)
-
-            return await callback.answer(
-                "❌ Database error",
-                show_alert=True
-            )
+            return await callback.answer("❌ Database error", show_alert=True)
 
         # =========================
-        # MARKETPLACE POST
+        # POST CHANNEL
         # =========================
-
         try:
-
             await callback.bot.send_message(
                 chat_id=CHANNEL_ID,
                 text=(
@@ -583,43 +532,31 @@ async def save(callback: CallbackQuery, state: FSMContext):
                 ),
                 parse_mode="HTML"
             )
-
         except Exception as e:
             print("POST ERROR:", e)
 
         # =========================
         # CLEAR SESSION
         # =========================
-
         SESSIONS.pop(uid, None)
-
         await state.clear()
 
-        try:
-
-            await callback.message.edit_text(
-                "🎉 SUCCESS SAVE\n\n"
-                f"🔑 CODE : {code}\n"
-                f"📸 PHOTO : {photo_count}\n"
-                f"🎥 VIDEO : {video_count}\n"
-                f"💰 PRICE : {price_text}\n"
-                f"🔐 SHARE : {share_text}\n\n"
-                "📤 Posted to marketplace"
-            )
-
-        except Exception:
-            pass
-
-        await callback.answer(
-            "✅ Berhasil disimpan"
+        await callback.message.edit_text(
+            "🎉 SUCCESS SAVE\n\n"
+            f"🔑 CODE : {code}\n"
+            f"📸 PHOTO : {photo_count}\n"
+            f"🎥 VIDEO : {video_count}\n"
+            f"💰 PRICE : {price_text}\n"
+            f"🔐 SHARE : {share_text}\n\n"
+            "📤 Posted to marketplace"
         )
 
+        await callback.answer("✅ Berhasil disimpan")
+
     finally:
-
-        session = SESSIONS.get(uid)
-
-        if session:
-            session["saving"] = False
+        s = SESSIONS.get(uid)
+        if s:
+            s["saving"] = False
 # =========================
 # CANCEL
 # =========================
