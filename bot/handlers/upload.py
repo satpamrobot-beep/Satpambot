@@ -84,7 +84,7 @@ def generate_code():
 # =========================
 # START
 # =========================
-@router.callback_query(F.data == "upmedia")
+@router.callback_query(F.data == "upload")
 async def start_upload(callback: CallbackQuery, state: FSMContext):
 
     uid = callback.from_user.id
