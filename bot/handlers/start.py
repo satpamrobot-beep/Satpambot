@@ -3,6 +3,7 @@ import asyncio
 from aiogram import Router, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from bot.state.admin_state import is_maintenance
 
 from bot.db.database import get_pool
 
@@ -126,14 +127,20 @@ async def get_balance(user_id: int):
 # =========================
 # START COMMAND (MAX SPEED CORE)
 # =========================
+
 @router.message(CommandStart())
 async def start(message: Message, bot):
     user = message.from_user
 
-    # background save (NO DELAY)
+    # 🔴 MAINTENANCE BLOCK (INI YANG KAMU LUPA)
+    if is_maintenance():
+        await message.answer(
+            "⚙️ Bot sedang maintenance\nSilakan coba lagi nanti"
+        )
+        return
+
     asyncio.create_task(save_user(user))
 
-    # FORCE JOIN CHECK (ANTI BYPASS)
     if not await force_join(bot, user.id):
         await message.answer(
             "⚠️ Kamu wajib join channel & group dulu",
@@ -141,17 +148,13 @@ async def start(message: Message, bot):
         )
         return
 
-    # GET BALANCE
     balance = await get_balance(user.id)
 
-    # DASHBOARD
     await message.answer(
         dashboard_text(user, balance),
         reply_markup=home_kb(),
         parse_mode="HTML"
     )
-
-
 # =========================
 # CHECK JOIN CALLBACK
 # =========================
