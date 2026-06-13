@@ -40,7 +40,7 @@ def dashboard_text(user, balance: int):
 def app_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="📤 Upmedia", callback_data="upload"),
+            InlineKeyboardButton(text="📤 Upmedia", callback_data="upmedia"),
             InlineKeyboardButton(text="📥 Getmedia", callback_data="getmedia"),
         ],
         [
@@ -184,13 +184,20 @@ async def start(message: Message, bot):
 # =========================
 # GLOBAL CALLBACK ROUTER
 # =========================
-@router.callback_query()
+@router.callback_query(
+    F.data.in_({
+        "account",
+        "withdraw",
+        "product",
+        "wallet",
+        "help",
+        "about",
+    })
+)
 async def router_all(callback: CallbackQuery, bot):
 
     await render(callback, bot, callback.from_user)
     await callback.answer()
-
-
 # =========================
 # REALTIME DETECTOR (AUTO LOCK)
 # =========================
