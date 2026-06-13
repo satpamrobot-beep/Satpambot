@@ -2,7 +2,7 @@ import asyncio
 
 from aiogram import Router, F
 from aiogram.filters import CommandStart
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ChatMemberUpdated
 
 from bot.state.admin_state import is_maintenance
 from bot.db.database import get_pool
@@ -11,9 +11,10 @@ from bot.db.user import save_user
 router = Router()
 
 # =========================
-# CONFIG (ONLY 1 CHANNEL)
+# CONFIG
 # =========================
 CHANNEL = -1004395938795
+
 
 # =========================
 # UI
@@ -23,54 +24,63 @@ def dashboard_text(user, balance: int):
     usd = balance / 16000
 
     return (
-        "💠 <b>EarnFile System</b>\n"
-        "──────────────\n\n"
-        f"👤 {username}\n"
-        f"🆔 <code>{user.id}</code>\n\n"
-        f"💰 Rp {balance:,.0f} | $ {usd:.2f}\n\n"
-        "──────────────\n"
-        "<i>© 2026 EarnFileBot Telegram</i>"
+        "📱 <b>APP DASHBOARD</b>\n"
+        "━━━━━━━━━━━━━━\n\n"
+        f"👤 User: {username}\n"
+        f"🆔 ID: <code>{user.id}</code>\n\n"
+        f"💰 Balance: Rp {balance:,.0f}\n"
+        f"💵 USD: $ {usd:.2f}\n\n"
+        "━━━━━━━━━━━━━━"
     )
 
 
 # =========================
-# HOME KEYBOARD
+# FULL MENU
 # =========================
-def home_kb():
+def app_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="📤 Upload", callback_data="upload"),
-            InlineKeyboardButton(text="🔑 Code", callback_data="open_code")
+            InlineKeyboardButton(text="📤 Upload File", callback_data="upload"),
+            InlineKeyboardButton(text="🔑 Code", callback_data="code")
         ],
         [
             InlineKeyboardButton(text="👤 Account", callback_data="account"),
-            InlineKeyboardButton(text="📦 Product", callback_data="my_product")
+            InlineKeyboardButton(text="📦 Product", callback_data="product")
         ],
         [
-            InlineKeyboardButton(text="⚙️ Setting", callback_data="setting"),
-            InlineKeyboardButton(text="❓ Help", callback_data="help")
+            InlineKeyboardButton(text="💰 Withdraw", callback_data="withdraw"),
+            InlineKeyboardButton(text="💳 Wallet", callback_data="wallet")
         ],
         [
+            InlineKeyboardButton(text="📊 Stats", callback_data="stats"),
+            InlineKeyboardButton(text="🏆 Rank", callback_data="rank")
+        ],
+        [
+            InlineKeyboardButton(text="⚙️ Settings", callback_data="settings"),
+            InlineKeyboardButton(text="🔔 Notifications", callback_data="notif")
+        ],
+        [
+            InlineKeyboardButton(text="❓ Help", callback_data="help"),
             InlineKeyboardButton(text="ℹ️ About", callback_data="about")
         ]
     ])
 
 
 # =========================
-# JOIN BUTTON (ONLY 1)
+# JOIN SCREEN
 # =========================
-def join_kb():
+def join_screen():
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
-                text="📢 Channel Update Link",
+                text="📢 Join Channel",
                 url="https://t.me/+mp7HeZPteus0ZDQ9"
             )
         ],
         [
             InlineKeyboardButton(
-                text="🔄 Check Join",
-                callback_data="check_join"
+                text="🔄 Check Access",
+                callback_data="check_access"
             )
         ]
     ])
@@ -92,35 +102,80 @@ async def get_balance(user_id: int):
 
 
 # =========================
-# FORCE CHECK (ANTI BYPASS CORE)
+# JOIN CHECK (ANTI BYPASS FIX)
 # =========================
 async def is_joined(bot, user_id: int) -> bool:
     try:
         member = await bot.get_chat_member(CHANNEL, user_id)
-        return member.status in ("member", "administrator", "creator")
+        status = member.status
+
+        # HARD BLOCK RULE
+        if status in ("left", "kicked"):
+            return False
+
+        return status in ("member", "administrator", "creator")
+
     except:
         return False
 
 
 # =========================
-# DASHBOARD SENDER (AUTO GATE)
+# SAFE RENDER ENGINE (NO DUPLICATE MESSAGE / NO SPAM)
 # =========================
-async def send_dashboard(target, bot, user):
+async def render(target, bot, user):
 
-    if not await is_joined(bot, user.id):
-        await target.answer(
-            "⚠️ Kamu harus join Channel dulu",
-            reply_markup=join_kb()
-        )
+    # maintenance mode
+    if is_maintenance():
+        text = "⚙️ Maintenance Mode"
+
+        try:
+            if hasattr(target, "message"):
+                await target.message.edit_text(text)
+            else:
+                await target.answer(text)
+        except:
+            pass
         return
 
-    balance = await get_balance(user.id)
+    # JOIN GATE
+    if not await is_joined(bot, user.id):
 
-    await target.answer(
-        dashboard_text(user, balance),
-        reply_markup=home_kb(),
-        parse_mode="HTML"
-    )
+        text = "🚫 Akses ditolak\nSilakan join channel dulu"
+
+        try:
+            if hasattr(target, "message"):
+                await target.message.edit_text(text, reply_markup=join_screen())
+            else:
+                await target.answer(text, reply_markup=join_screen())
+        except:
+            if hasattr(target, "message"):
+                await target.message.answer(text, reply_markup=join_screen())
+        return
+
+    # DASHBOARD
+    balance = await get_balance(user.id)
+    text = dashboard_text(user, balance)
+
+    try:
+        if hasattr(target, "message"):
+            await target.message.edit_text(
+                text,
+                reply_markup=app_menu(),
+                parse_mode="HTML"
+            )
+        else:
+            await target.answer(
+                text,
+                reply_markup=app_menu(),
+                parse_mode="HTML"
+            )
+    except:
+        if hasattr(target, "message"):
+            await target.message.answer(
+                text,
+                reply_markup=app_menu(),
+                parse_mode="HTML"
+            )
 
 
 # =========================
@@ -131,44 +186,37 @@ async def start(message: Message, bot):
 
     user = message.from_user
 
-    if is_maintenance():
-        await message.answer("⚙️ Bot sedang maintenance")
-        return
-
     asyncio.create_task(save_user(user))
 
-    await send_dashboard(message, bot, user)
+    await render(message, bot, user)
 
 
 # =========================
-# CHECK JOIN BUTTON
+# GLOBAL CALLBACK ROUTER
 # =========================
-@router.callback_query(F.data == "check_join")
-async def check_join(callback: CallbackQuery, bot):
+@router.callback_query()
+async def router_all(callback: CallbackQuery, bot):
 
-    user = callback.from_user
-
-    if await is_joined(bot, user.id):
-        await callback.message.edit_text(
-            "✅ Join verified, loading dashboard..."
-        )
-
-        await send_dashboard(callback.message, bot, user)
-        await callback.answer()
-
-    else:
-        await callback.answer("❌ Kamu belum join channel", show_alert=True)
+    await render(callback, bot, callback.from_user)
+    await callback.answer()
 
 
 # =========================
-# AUTO BLOCK IF LEFT (REALTIME SAFE)
+# REALTIME DETECTOR (AUTO LOCK)
 # =========================
 @router.chat_member()
-async def on_chat_member(update, bot):
+async def on_chat_member(update: ChatMemberUpdated, bot):
 
     user_id = update.from_user.id
-    new_status = update.new_chat_member.status
+    status = update.new_chat_member.status
 
-    # kalau keluar
-    if new_status in ("left", "kicked"):
-        print(f"[LEFT DETECTED] {user_id}")
+    # kalau keluar channel → lock access
+    if status in ("left", "kicked"):
+
+        try:
+            await bot.send_message(
+                user_id,
+                "🚫 Kamu keluar dari channel\nAkses aplikasi dikunci."
+            )
+        except:
+            pass
