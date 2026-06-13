@@ -23,14 +23,15 @@ async def admin_dashboard(token: str = Query(default="")):
     if not check_token(token):
         return HTMLResponse("403 Forbidden", status_code=403)
 
-    return f"""
+    html = """
 <!DOCTYPE html>
 <html>
 <head>
 <title>Admin Control Center</title>
 
 <script>
-const token = "{token}";
+
+const token = "__TOKEN__";
 let selectedUser = null;
 
 async function loadUsers(){
@@ -51,10 +52,10 @@ async function loadUsers(){
     document.getElementById("users").innerHTML = html;
 }
 
-async function selectUser(id){{
+async function selectUser(id){
     selectedUser = id;
 
-    const res = await fetch(`/admin/api/user/detail?token=${{token}}&user_id=${{id}}`);
+    const res = await fetch(`/admin/api/user/detail?token=${token}&user_id=${id}`);
     const d = await res.json();
 
     document.getElementById("detail").innerHTML = `
@@ -67,55 +68,57 @@ async function selectUser(id){{
         <h4>📦 Codes</h4>
         ${d.codes.map(c => `<div>🔑 ${c.code} | Rp ${c.price}</div>`).join("")}
     `;
-}}
+}
 
-async function broadcast(){{
+async function broadcast(){
     const msg = document.getElementById("bc").value;
 
-    await fetch(`/admin/api/broadcast?token=${{token}}`, {{
+    await fetch(`/admin/api/broadcast?token=${token}`, {
         method: "POST",
-        headers: {{ "Content-Type": "application/json" }},
-        body: JSON.stringify({{ message: msg }})
-    }});
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: msg })
+    });
 
     alert("Broadcast sent");
-}}
+}
 
-async function toggleMaintenance(){{
-    await fetch(`/admin/api/maintenance/toggle?token=${{token}}`, {{
+async function toggleMaintenance(){
+    await fetch(`/admin/api/maintenance/toggle?token=${token}`, {
         method: "POST"
-    }});
+    });
 
     alert("Maintenance toggled");
-}}
+}
 
 window.onload = loadUsers;
+
 </script>
 
 <style>
-body{{
+body{
     background:#0f0f0f;
     color:white;
     font-family:Arial;
     display:flex;
-}}
+}
 
-.panel{{
+.panel{
     width:30%;
     padding:10px;
     border-right:1px solid #333;
-}}
+}
 
-.detail{{
+.detail{
     width:70%;
     padding:10px;
-}}
+}
 
-input,button{{
+input,button,textarea{
     padding:10px;
     margin:5px;
-}}
+}
 </style>
+
 </head>
 
 <body>
@@ -142,7 +145,7 @@ input,button{{
 </html>
 """
 
-
+    return HTMLResponse(html.replace("__TOKEN__", token))
 # =========================
 # USER LIST
 # =========================
