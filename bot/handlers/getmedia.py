@@ -119,16 +119,40 @@ async def open_file(callback: CallbackQuery):
     videos = row["videos"] or []
 
     # =========================
-    # FILTER VALID FILE_ID
+    # AUTO CLEAN / REPAIR DATA
     # =========================
-    def valid_file_id(x):
-        return isinstance(x, str) and len(x) > 10
+    clean_photos = [p for p in photos if is_valid_file_id(p)]
+    clean_videos = [v for v in videos if is_valid_file_id(v)]
 
-    photos = [p for p in photos if valid_file_id(p)]
-    videos = [v for v in videos if valid_file_id(v)]
+    # kalau ada yang rusak → update DB (auto repair)
+    if len(clean_photos) != len(photos) or len(clean_videos) != len(videos):
+
+        try:
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    UPDATE uploads
+                    SET photos = $1,
+                        videos = $2
+                    WHERE code = $3
+                    """,
+                    clean_photos,
+                    clean_videos,
+                    code
+                )
+            print(f"🧹 AUTO REPAIR DONE: {code}")
+
+        except Exception as e:
+            print("REPAIR ERROR:", e)
+
+    photos = clean_photos
+    videos = clean_videos
 
     if not photos and not videos:
-        return await callback.answer("❌ Media rusak / kosong", show_alert=True)
+        return await callback.answer(
+            "❌ Semua media rusak sudah dihapus otomatis",
+            show_alert=True
+        )
 
     media = []
 
@@ -138,9 +162,6 @@ async def open_file(callback: CallbackQuery):
     for video in videos:
         media.append(InputMediaVideo(media=video))
 
-    # =========================
-    # SEND SAFE BATCH
-    # =========================
     try:
         while media:
             chunk = media[:10]
@@ -151,7 +172,7 @@ async def open_file(callback: CallbackQuery):
     except Exception as e:
         print("MEDIA ERROR:", e)
         return await callback.answer(
-            "❌ File ada yang rusak (file_id invalid)",
+            "❌ File rusak (sudah dicoba auto repair)",
             show_alert=True
         )
 
