@@ -78,13 +78,14 @@ async def check_join(bot, user_id: int, chat: int) -> bool:
     try:
         member = await bot.get_chat_member(chat_id=chat, user_id=user_id)
 
-        return member.status in (
-            "member",
-            "administrator",
-            "creator"
-        )
+        status = member.status
 
-    except Exception:
+        print(f"[CHECK JOIN] user={user_id} chat={chat} status={status}")
+
+        return status in ("member", "administrator", "creator")
+
+    except Exception as e:
+        print(f"[CHECK JOIN ERROR] user={user_id} chat={chat} error={e}")
         return False
 
 # =========================
@@ -92,22 +93,14 @@ async def check_join(bot, user_id: int, chat: int) -> bool:
 # =========================
 async def force_join(bot, user_id: int) -> bool:
     try:
-        ch_task = check_join(bot, user_id, CHANNEL)
-        gp_task = check_join(bot, user_id, GROUP)
+        ch, gp = await asyncio.gather(
+            check_join(bot, user_id, CHANNEL),
+            check_join(bot, user_id, GROUP)
+        )
 
-        ch, gp = await asyncio.gather(ch_task, gp_task)
-
-        # 🔥 DEBUG (penting untuk cek bug)
         print(f"[JOIN CHECK] user={user_id} channel={ch} group={gp}")
 
-        # 🔥 STRICT CHECK
-        if ch is not True:
-            return False
-
-        if gp is not True:
-            return False
-
-        return True
+        return bool(ch and gp)
 
     except Exception as e:
         print("[FORCE JOIN ERROR]", e)
@@ -185,13 +178,27 @@ async def cek_join(callback: CallbackQuery, bot):
     if await force_join(bot, user_id):
         balance = await get_balance(user_id)
 
-        await callback.message.edit_text(
-            dashboard_text(callback.from_user, balance),
-            reply_markup=home_kb(),
-            parse_mode="HTML"
-        )
+        try:
+            await callback.message.edit_text(
+                dashboard_text(callback.from_user, balance),
+                reply_markup=home_kb(),
+                parse_mode="HTML"
+            )
+        except Exception:
+            # fallback kalau edit gagal
+            await callback.message.answer(
+                dashboard_text(callback.from_user, balance),
+                reply_markup=home_kb(),
+                parse_mode="HTML"
+            )
+
+        await callback.answer()  # ✅ penting
+
     else:
-        await callback.answer("❌ Belum join semua", show_alert=True)
+        await callback.answer(
+            "❌ Belum join semua",
+            show_alert=True
+        )
 
 
 # =========================
