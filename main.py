@@ -47,9 +47,19 @@ async def on_startup():
 # =========================
 async def start_bot():
     await on_startup()
+
+    # 🔥 REGISTER ROUTER
+    dp.include_router(start.router)
+
+    # 🔥 REGISTER MIDDLEWARE (WAJIB SEBELUM POLLING)
+    from bot.middleware.maintenance import MaintenanceMiddleware
+
+    dp.message.middleware(MaintenanceMiddleware())
+    dp.callback_query.middleware(MaintenanceMiddleware())
+
+    print("🤖 Bot polling started")
+
     await dp.start_polling(bot)
-
-
 # =========================
 # FASTAPI RUNNER
 # =========================
