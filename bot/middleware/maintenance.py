@@ -14,21 +14,28 @@ class MaintenanceMiddleware(BaseMiddleware):
         data: Dict[str, Any]
     ):
 
+        # =========================
+        # GLOBAL MAINTENANCE BLOCK
+        # =========================
         if is_maintenance():
 
-            # Message
+            # MESSAGE BLOCK
             if isinstance(event, Message):
-                await event.answer(
-                    "⚙️ Bot sedang maintenance"
-                )
-                return
+                await event.answer("⚙️ Bot sedang maintenance")
+                return  # STOP TOTAL
 
-            # Callback
+            # CALLBACK BLOCK
             if isinstance(event, CallbackQuery):
                 await event.answer(
-                    "Maintenance aktif",
+                    "⚙️ Maintenance aktif",
                     show_alert=True
                 )
-                return
+                return  # STOP TOTAL
 
+            # BLOCK ALL OTHER UPDATES TOO
+            return
+
+        # =========================
+        # NORMAL FLOW
+        # =========================
         return await handler(event, data)
