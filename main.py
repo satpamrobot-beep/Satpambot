@@ -3,10 +3,8 @@ import uvicorn
 
 from fastapi import FastAPI
 
-from aiogram import Dispatcher
 from bot.loader import bot, dp
-
-from bot.db.database import init_db, close_db
+from bot.db.database import init_db
 from bot.handlers import start
 from services.notify import set_bot
 
@@ -15,13 +13,11 @@ from services.notify import set_bot
 # =========================
 app = FastAPI()
 
-
 # =========================
-# INCLUDE WEBHOOK ROUTE
+# IMPORT WEBHOOK ROUTER (FIXED)
 # =========================
-from bot.webhook import bayargg_webhook
-app.include_router(bayargg_webhook.router if hasattr(bayargg_webhook, "router") else bayargg_webhook)
-
+from bot.webhook import router as bayargg_router
+app.include_router(bayargg_router)
 
 # =========================
 # BOT STARTUP
@@ -43,7 +39,7 @@ async def start_bot():
 # =========================
 # FASTAPI RUNNER
 # =========================
-def start_api():
+async def start_api():
     config = uvicorn.Config(
         app,
         host="0.0.0.0",
@@ -51,16 +47,15 @@ def start_api():
         log_level="info"
     )
     server = uvicorn.Server(config)
-    return server.serve()
+    await server.serve()
 
 
 # =========================
-# MAIN COMBINED RUNNER
+# MAIN RUNNER
 # =========================
 async def main():
     await on_startup()
 
-    # jalanin 2 service bareng
     await asyncio.gather(
         start_bot(),
         start_api()
