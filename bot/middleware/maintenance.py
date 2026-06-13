@@ -1,6 +1,6 @@
 from aiogram import BaseMiddleware
 from aiogram.types import Message, CallbackQuery
-from typing import Callable, Awaitable, Any
+from typing import Callable, Dict, Any, Awaitable
 
 from bot.state.admin_state import is_maintenance
 
@@ -9,31 +9,24 @@ class MaintenanceMiddleware(BaseMiddleware):
 
     async def __call__(
         self,
-        handler: Callable[[Any, dict], Awaitable[Any]],
+        handler: Callable[[Any, Dict[str, Any]], Awaitable[Any]],
         event: Any,
-        data: dict
+        data: Dict[str, Any]
     ):
 
-        # cek maintenance
         if is_maintenance():
 
-            # allow admin bypass (optional)
-            user = data.get("event_from_user")
-
-            if user and user.id == int(data.get("admin_id", 0)):
-                return await handler(event, data)
-
-            # handle message
+            # Message
             if isinstance(event, Message):
                 await event.answer(
-                    "⚙️ Bot sedang maintenance\nSilakan coba lagi nanti"
+                    "⚙️ Bot sedang maintenance"
                 )
                 return
 
-            # handle callback
+            # Callback
             if isinstance(event, CallbackQuery):
                 await event.answer(
-                    "Bot maintenance",
+                    "Maintenance aktif",
                     show_alert=True
                 )
                 return
