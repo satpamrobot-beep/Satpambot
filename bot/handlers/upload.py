@@ -12,7 +12,7 @@ router = Router()
 
 SESSIONS = {}
 
-CHANNEL_ID = -1001234567890  # ganti ke group/channel kamu
+CHANNEL_ID = -1003721009353  # ganti ke group/channel kamu
 # =========================
 # STATE
 # =========================
