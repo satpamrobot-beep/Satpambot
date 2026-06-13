@@ -1,15 +1,10 @@
 import asyncio
 import time
+from collections import defaultdict
 
 from aiogram import Router, F
 from aiogram.filters import CommandStart
-from aiogram.types import (
-    Message,
-    CallbackQuery,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-    ChatMemberUpdated
-)
+from aiogram.types import Message, CallbackQuery, ChatMemberUpdated, InlineKeyboardMarkup, InlineKeyboardButton
 
 from bot.state.admin_state import is_maintenance
 from bot.db.database import get_pool
@@ -23,20 +18,34 @@ CHANNEL = -1003777107004
 GROUP = -1003721009353
 
 # =========================
-# CACHE
+# CACHE JOIN (FAST)
 # =========================
 JOIN_CACHE = {}
 CACHE_TTL = 30
 
+# =========================
+# ANTI FAKE / MULTI ACCOUNT DETECTION
+# =========================
+USER_JOIN_LOG = defaultdict(list)  # user_id -> timestamps
+SUSPICIOUS_USERS = set()
 
+JOIN_LIMIT_WINDOW = 60  # detik
+JOIN_LIMIT_MAX = 5      # max join/leave event dalam window
+
+
+# =========================
+# CACHE
+# =========================
 def cache_get(key):
     data = JOIN_CACHE.get(key)
     if not data:
         return None
+
     val, exp = data
     if time.time() > exp:
         JOIN_CACHE.pop(key, None)
         return None
+
     return val
 
 
@@ -62,9 +71,6 @@ def dashboard_text(user, balance: int):
     )
 
 
-# =========================
-# FULL MENU (RESTORED)
-# =========================
 def home_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -79,12 +85,8 @@ def home_kb():
             InlineKeyboardButton(text="⚙️ Setting", callback_data="setting"),
             InlineKeyboardButton(text="❓ Help", callback_data="help")
         ],
-        [
-            InlineKeyboardButton(text="ℹ️ About", callback_data="about")
-        ],
-        [
-            InlineKeyboardButton(text="🔄 Refresh", callback_data="home")
-        ]
+        [InlineKeyboardButton(text="ℹ️ About", callback_data="about")],
+        [InlineKeyboardButton(text="🔄 Refresh", callback_data="home")]
     ])
 
 
@@ -97,30 +99,42 @@ def join_kb():
 
 
 # =========================
-# JOIN CHECK CORE
+# CORE CHECK (NO BYPASS)
 # =========================
-async def check_join(bot, user_id: int, chat: int):
-    key = (user_id, chat)
-
-    cached = cache_get(key)
-    if cached is not None:
-        return cached
-
+async def check_join(bot, user_id: int, chat: int) -> bool:
     try:
-        member = await bot.get_chat_member(chat_id=chat, user_id=user_id)
-        ok = member.status in ("member", "administrator", "creator")
-        cache_set(key, ok)
-        return ok
+        member = await bot.get_chat_member(chat, user_id)
+        return member.status in ("member", "administrator", "creator")
     except:
         return False
 
 
-async def force_join(bot, user_id: int):
+async def force_join(bot, user_id: int) -> bool:
     ch, gp = await asyncio.gather(
         check_join(bot, user_id, CHANNEL),
         check_join(bot, user_id, GROUP)
     )
     return ch and gp
+
+
+# =========================
+# ANTI FAKE JOIN TRACKER
+# =========================
+def track_join_activity(user_id: int):
+    now = time.time()
+    USER_JOIN_LOG[user_id].append(now)
+
+    # keep last 1 minute only
+    USER_JOIN_LOG[user_id] = [
+        t for t in USER_JOIN_LOG[user_id]
+        if now - t <= JOIN_LIMIT_WINDOW
+    ]
+
+    if len(USER_JOIN_LOG[user_id]) >= JOIN_LIMIT_MAX:
+        SUSPICIOUS_USERS.add(user_id)
+        return False
+
+    return True
 
 
 # =========================
@@ -139,7 +153,7 @@ async def get_balance(user_id: int):
 
 
 # =========================
-# START (ANTI BYPASS GATE)
+# START (HARD GATE)
 # =========================
 @router.message(CommandStart())
 async def start(message: Message, bot):
@@ -150,6 +164,12 @@ async def start(message: Message, bot):
         await message.answer("⚙️ Maintenance")
         return
 
+    # 🔥 ANTI FAKE / MULTI ACCOUNT CHECK
+    if not track_join_activity(user.id):
+        await message.answer("🚫 Suspicious activity detected")
+        return
+
+    # 🔥 HARD JOIN CHECK (NO CACHE TRUST)
     if not await force_join(bot, user.id):
         await message.answer(
             "⚠️ Kamu wajib join channel & group dulu",
@@ -200,7 +220,10 @@ async def on_chat_member(update: ChatMemberUpdated, bot):
 
     print(f"[REALTIME] user={user_id} chat={chat_id} status={status}")
 
+    # 🔥 DETECT LEAVE / KICK
     if status in ("left", "kicked"):
+
+        track_join_activity(user_id)
 
         try:
             await bot.ban_chat_member(chat_id, user_id)
@@ -208,3 +231,13 @@ async def on_chat_member(update: ChatMemberUpdated, bot):
             pass
 
         print(f"[AUTO BAN] {user_id}")
+
+    # 🔥 DETECT JOIN SPAM (FAKE JOIN PATTERN)
+    if status == "member" and user_id in SUSPICIOUS_USERS:
+
+        try:
+            await bot.ban_chat_member(chat_id, user_id)
+        except:
+            pass
+
+        print(f"[ANTI FAKE JOIN BAN] {user_id}")
