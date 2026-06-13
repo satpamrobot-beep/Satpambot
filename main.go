@@ -1,33 +1,37 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
-	bot, err := tgbotapi.NewBotAPI(os.Getenv("BOT_TOKEN"))
+
+	pool, err := pgxpool.New(
+		context.Background(),
+		os.Getenv("DATABASE_URL"),
+	)
+
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60
+	defer pool.Close()
 
-	updates := bot.GetUpdatesChan(u)
+	bot, err := tgbotapi.NewBotAPI(
+		os.Getenv("BOT_TOKEN"),
+	)
 
-	for update := range updates {
-		if update.Message == nil {
-			continue
-		}
-
-		msg := tgbotapi.NewMessage(
-			update.Message.Chat.ID,
-			"Bot online 🚀",
-		)
-
-		bot.Send(msg)
+	if err != nil {
+		log.Fatal(err)
 	}
+
+	log.Println("Bot Online")
+
+	_ = pool
+	_ = bot
 }
