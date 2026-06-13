@@ -40,32 +40,22 @@ def dashboard_text(user, balance: int):
 def app_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="📤 Upload File", callback_data="upload"),
-            InlineKeyboardButton(text="🔑 Code", callback_data="code")
+            InlineKeyboardButton(text="📤 Upmedia", callback_data="upload"),
+            InlineKeyboardButton(text="📥 Getmedia", callback_data="getmedia"),
         ],
         [
             InlineKeyboardButton(text="👤 Account", callback_data="account"),
-            InlineKeyboardButton(text="📦 Product", callback_data="product")
-        ],
-        [
             InlineKeyboardButton(text="💰 Withdraw", callback_data="withdraw"),
-            InlineKeyboardButton(text="💳 Wallet", callback_data="wallet")
         ],
         [
-            InlineKeyboardButton(text="📊 Stats", callback_data="stats"),
-            InlineKeyboardButton(text="🏆 Rank", callback_data="rank")
-        ],
-        [
-            InlineKeyboardButton(text="⚙️ Settings", callback_data="settings"),
-            InlineKeyboardButton(text="🔔 Notifications", callback_data="notif")
+            InlineKeyboardButton(text="📦 Product", callback_data="product"),
+            InlineKeyboardButton(text="💳 Wallet", callback_data="wallet"),
         ],
         [
             InlineKeyboardButton(text="❓ Help", callback_data="help"),
-            InlineKeyboardButton(text="ℹ️ About", callback_data="about")
+            InlineKeyboardButton(text="ℹ️ About", callback_data="about"),
         ]
     ])
-
-
 # =========================
 # JOIN SCREEN
 # =========================
