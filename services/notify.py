@@ -3,7 +3,7 @@ import asyncio
 from aiogram import Bot
 
 from bot.db.database import get_pool
-from bot.maintenance_state import is_maintenance
+from bot.state.admin_state import is_maintenance
 
 # =========================
 # BOT INSTANCE
