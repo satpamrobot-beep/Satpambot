@@ -1,5 +1,6 @@
 from aiogram import Bot
 import os
+from bot.db.database import get_pool
 
 # =========================
 # BOT INSTANCE
@@ -16,11 +17,10 @@ def set_bot(instance: Bot):
 # CONFIG
 # =========================
 ADMIN_GROUP_ID = int(os.getenv("ADMIN_GROUP_ID", "0"))
-CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))  # optional
 
 
 # =========================
-# BASE SENDER (SAFE)
+# BASE SEND SAFE
 # =========================
 async def send_group(text: str):
     if not bot or not ADMIN_GROUP_ID:
@@ -54,21 +54,16 @@ async def send_user(user_id: int, text: str):
 # PAYMENT NOTIFY
 # =========================
 async def notify_payment(user_id: int, amount: int, trx_id: str = ""):
-    text = (
+    await send_group(
         "💸 <b>PAYMENT SUCCESS</b>\n"
-        "──────────────\n"
-        f"👤 User: <code>{user_id}</code>\n"
-        f"💰 Amount: Rp {amount:,.0f}\n"
-        f"🧾 TRX: <code>{trx_id}</code>\n"
+        f"User: <code>{user_id}</code>\n"
+        f"Amount: Rp {amount:,.0f}\n"
+        f"TRX: <code>{trx_id}</code>"
     )
-
-    await send_group(text)
 
     await send_user(
         user_id,
-        "💰 <b>Saldo Masuk</b>\n\n"
-        f"Rp {amount:,.0f}\n"
-        "Status: SUCCESS"
+        f"💰 Saldo masuk Rp {amount:,.0f}"
     )
 
 
@@ -76,61 +71,46 @@ async def notify_payment(user_id: int, amount: int, trx_id: str = ""):
 # WITHDRAW NOTIFY
 # =========================
 async def notify_withdraw(wd_id: int, user_id: int, amount: int, status: str):
-    text = (
-        "💸 <b>WITHDRAW UPDATE</b>\n"
-        "──────────────\n"
-        f"🆔 WD: <code>{wd_id}</code>\n"
-        f"👤 User: <code>{user_id}</code>\n"
-        f"💰 Amount: Rp {amount:,.0f}\n"
-        f"📌 Status: <b>{status}</b>\n"
+    await send_group(
+        "💸 <b>WITHDRAW</b>\n"
+        f"WD: {wd_id}\n"
+        f"User: <code>{user_id}</code>\n"
+        f"Amount: Rp {amount:,.0f}\n"
+        f"Status: {status}"
     )
-
-    await send_group(text)
 
     await send_user(
         user_id,
-        f"💸 Withdraw {status}\nRp {amount:,.0f}"
+        f"Withdraw {status}: Rp {amount:,.0f}"
     )
 
 
 # =========================
-# CODE CREATED NOTIFY
+# CODE CREATED
 # =========================
 async def notify_code_created(user_id: int, code: str, price: int):
-    text = (
-        "🔑 <b>NEW CODE CREATED</b>\n"
-        "──────────────\n"
-        f"👤 User: <code>{user_id}</code>\n"
-        f"🔐 Code: <code>{code}</code>\n"
-        f"💰 Price: Rp {price:,.0f}\n"
+    await send_group(
+        "🔑 <b>NEW CODE</b>\n"
+        f"User: <code>{user_id}</code>\n"
+        f"Code: <code>{code}</code>\n"
+        f"Price: Rp {price:,.0f}"
     )
 
-    await send_group(text)
-
 
 # =========================
-# CODE SOLD NOTIFY (OPTIONAL)
+# BROADCAST ALL USERS
 # =========================
-async def notify_code_sold(buyer_id: int, code: str, price: int):
-    text = (
-        "🛒 <b>CODE SOLD</b>\n"
-        "──────────────\n"
-        f"👤 Buyer: <code>{buyer_id}</code>\n"
-        f"🔐 Code: <code>{code}</code>\n"
-        f"💰 Price: Rp {price:,.0f}\n"
-    )
+async def broadcast(text: str):
+    if not bot:
+        return
 
-    await send_group(text)
+    pool = get_pool()
 
+    async with pool.acquire() as conn:
+        users = await conn.fetch("SELECT user_id FROM users")
 
-# =========================
-# GENERAL EVENT LOG
-# =========================
-async def send_event(title: str, message: str):
-    text = (
-        f"📌 <b>{title}</b>\n"
-        "──────────────\n"
-        f"{message}"
-    )
-
-    await send_group(text)
+    for u in users:
+        try:
+            await bot.send_message(u["user_id"], text)
+        except:
+            pass
