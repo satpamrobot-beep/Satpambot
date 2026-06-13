@@ -26,14 +26,14 @@ class UploadState(StatesGroup):
 # =========================
 def new_session():
     return {
-        "photos": 0,
-        "videos": 0,
+        "photos": [],
+        "videos": [],
         "mode": None,
         "payment": 0,
         "share": None,
+        "msg_id": None,
+        "chat_id": None,
     }
-
-
 # =========================
 # KEYBOARD
 # =========================
@@ -97,15 +97,16 @@ async def start_upload(callback: CallbackQuery, state: FSMContext):
         reply_markup=upload_kb()
     )
 
-    # 🔥 simpan message id untuk edit real-time
-    await state.update_data(upload_msg_id=msg.message_id)
+    # FIX PENTING
+    SESSIONS[uid]["msg_id"] = msg.message_id
+    SESSIONS[uid]["chat_id"] = msg.chat.id
 
     await callback.answer()
 # =========================
 # COLLECT MEDIA
 # =========================
 @router.message(UploadState.collecting, F.photo | F.video)
-async def collect_media(message: Message, state: FSMContext):
+async def collect_media(message: Message):
 
     uid = message.from_user.id
     if uid not in SESSIONS:
@@ -114,39 +115,35 @@ async def collect_media(message: Message, state: FSMContext):
     s = SESSIONS[uid]
 
     if message.photo:
-        s["photos"] += 1
+        s["photos"].append(message.photo[-1].file_id)
+
     elif message.video:
-        s["videos"] += 1
+        s["videos"].append(message.video.file_id)
 
-    total = s["photos"] + s["videos"]
+    total = len(s["photos"]) + len(s["videos"])
 
-    # 🔥 hapus pesan user biar gak numpuk
+    # hapus pesan user (biar gak numpuk chat)
     try:
         await message.delete()
     except:
         pass
 
-    # 🔥 ambil message upload terakhir dari state (biar edit, bukan spam)
-    data = await state.get_data()
-    upload_msg_id = data.get("upload_msg_id")
-
     text = (
         "📥 RECEIVED\n"
-        f"📸 Photo: {s['photos']}\n"
-        f"🎥 Video: {s['videos']}\n"
+        f"📸 Photo: {len(s['photos'])}\n"
+        f"🎥 Video: {len(s['videos'])}\n"
         f"📦 Total: {total}"
     )
 
-    if upload_msg_id:
-        try:
-            await message.bot.edit_message_text(
-                chat_id=message.chat.id,
-                message_id=upload_msg_id,
-                text=text,
-                reply_markup=upload_kb()
-            )
-        except:
-            pass
+    try:
+        await message.bot.edit_message_text(
+            chat_id=s["chat_id"],
+            message_id=s["msg_id"],
+            text=text,
+            reply_markup=upload_kb()
+        )
+    except:
+        pass
 # =========================
 # DONE → MODE
 # =========================
@@ -157,7 +154,7 @@ async def done(callback: CallbackQuery, state: FSMContext):
     if uid not in SESSIONS:
         return await callback.answer("Session expired", show_alert=True)
 
-    await state.set_state(UploadState.payment_input)
+    await state.set_state(None)
 
     await callback.message.edit_text(
         "⚙️ PILIH MODE",
@@ -256,7 +253,6 @@ async def save(callback: CallbackQuery):
     user = callback.from_user
 
     s = SESSIONS.get(uid)
-
     if not s:
         return await callback.answer("Session expired", show_alert=True)
 
@@ -275,29 +271,20 @@ async def save(callback: CallbackQuery):
         s["mode"], s["payment"], s["share"]
         )
 
-    # =========================
-    # CREATOR NAME
-    # =========================
     username = f"@{user.username}" if user.username else user.full_name
 
-    # =========================
-    # FORMAT MESSAGE
-    # =========================
     post_text = (
         "📦 <b>NEW UPLOAD</b>\n"
         "━━━━━━━━━━━━━━\n\n"
         f"🔑 Code: <code>{code}</code>\n"
-        f"📸 Photo: {s['photos']}\n"
-        f"🎥 Video: {s['videos']}\n"
-        f"💰 Payment: {s['payment']}\n"
-        f"🔐 Share: {s['share']}\n\n"
         f"👤 Created by: {username}\n"
+        f"📸 Photo: {len(s['photos'])}\n"
+        f"🎥 Video: {len(s['videos'])}\n"
+        f"💰 Payment: {s['payment']}\n"
+        f"🔐 Share: {s['share']}\n"
         "━━━━━━━━━━━━━━"
     )
 
-    # =========================
-    # AUTO POST TO GROUP
-    # =========================
     try:
         await callback.bot.send_message(
             chat_id=CHANNEL_ID,
@@ -307,31 +294,31 @@ async def save(callback: CallbackQuery):
     except Exception as e:
         print("POST ERROR:", e)
 
-    # =========================
-    # USER RESPONSE
-    # =========================
+    # ✅ FINAL USER RESPONSE (HANYA 1x)
     await callback.message.edit_text(
         f"✅ SUCCESS\n\n"
         f"CODE: {code}\n"
-        f"📸 Photo: {s['photos']}\n"
-        f"🎥 Video: {s['videos']}\n"
-        f"💰 Payment: {s['payment']}\n"
-        f"🔐 Share: {s['share']}\n\n"
-        f"📤 Posted to group"
+        f"📤 Posted to marketplace"
     )
 
+    # ✅ CLEANUP (HANYA 1x)
     SESSIONS.pop(uid, None)
+
     await callback.answer()
 
 @router.callback_query(F.data == "up_cancel")
 async def cancel(callback: CallbackQuery, state: FSMContext):
 
-    SESSIONS.pop(callback.from_user.id, None)
+    uid = callback.from_user.id
+    SESSIONS.pop(uid, None)
+
     await state.clear()
 
     await callback.answer("❌ Upload dibatalkan", show_alert=True)
 
-    # balik ke home/dashboard
-    from bot.handlers.start import render
-
-    await render(callback, callback.bot, callback.from_user)
+    try:
+        from bot.handlers.start import render
+        await render(callback, callback.bot, callback.from_user)
+    except Exception as e:
+        print("CANCEL ERROR:", e)
+        await callback.message.edit_text("🏠 Back to home")
