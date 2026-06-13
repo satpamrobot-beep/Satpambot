@@ -33,23 +33,23 @@ async def admin_dashboard(token: str = Query(default="")):
 const token = "{token}";
 let selectedUser = null;
 
-async function loadUsers(){{
-    const res = await fetch(`/admin/api/users?token=${{token}}`);
+async function loadUsers(){
+    const res = await fetch(`/admin/api/users?token=${token}`);
     const data = await res.json();
 
     let html = "<h3>👥 USER LIST</h3>";
 
-    data.forEach(u => {{
+    data.forEach(u => {
         html += `
         <div style="padding:10px;margin:5px;background:#222;cursor:pointer"
              onclick="selectUser(${u.user_id})">
-            👤 ${u.username || "no_username"} <br>
+            👤 ${u.username ? u.username : "no_username"} <br>
             ID: ${u.user_id}
         </div>`;
-    }});
+    });
 
     document.getElementById("users").innerHTML = html;
-}}
+}
 
 async function selectUser(id){{
     selectedUser = id;
