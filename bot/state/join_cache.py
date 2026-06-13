@@ -1,5 +1,6 @@
 import time
-from typing import Dict, Tuple
+import asyncio
+from typing import Dict, Tuple, Optional
 
 # =========================
 # CACHE STORAGE
@@ -8,11 +9,16 @@ from typing import Dict, Tuple
 # value = (status: bool, expires_at: float)
 JOIN_CACHE: Dict[Tuple[int, int], Tuple[bool, float]] = {}
 
-# cache 60 detik (biar gak spam API)
-CACHE_TTL = 60
+CACHE_TTL = 60  # detik
+
+# biar aman kalau async banyak request
+_lock = asyncio.Lock()
 
 
-def get_cache(user_id: int, chat_id: int):
+# =========================
+# GET CACHE
+# =========================
+def get_cache(user_id: int, chat_id: int) -> Optional[bool]:
     key = (user_id, chat_id)
 
     data = JOIN_CACHE.get(key)
@@ -21,6 +27,7 @@ def get_cache(user_id: int, chat_id: int):
 
     status, exp = data
 
+    # expired → hapus
     if time.time() > exp:
         JOIN_CACHE.pop(key, None)
         return None
@@ -28,16 +35,33 @@ def get_cache(user_id: int, chat_id: int):
     return status
 
 
-def set_cache(user_id: int, chat_id: int, status: bool):
+# =========================
+# SET CACHE
+# =========================
+async def set_cache(user_id: int, chat_id: int, status: bool):
     key = (user_id, chat_id)
-    JOIN_CACHE[key] = (status, time.time() + CACHE_TTL)
+
+    async with _lock:
+        JOIN_CACHE[key] = (
+            status,
+            time.time() + CACHE_TTL
+        )
 
 
-def clear_user_cache(user_id: int):
-    keys = [k for k in JOIN_CACHE.keys() if k[0] == user_id]
-    for k in keys:
-        JOIN_CACHE.pop(k, None)
+# =========================
+# CLEAR USER CACHE
+# =========================
+async def clear_user_cache(user_id: int):
+    async with _lock:
+        keys = [k for k in list(JOIN_CACHE.keys()) if k[0] == user_id]
+
+        for k in keys:
+            JOIN_CACHE.pop(k, None)
 
 
-def clear_all_cache():
-    JOIN_CACHE.clear()
+# =========================
+# CLEAR ALL CACHE
+# =========================
+async def clear_all_cache():
+    async with _lock:
+        JOIN_CACHE.clear()
