@@ -23,7 +23,7 @@ CHANNEL = -1003777107004
 GROUP = -1003721009353
 
 # =========================
-# JOIN CACHE (ANTI SPAM API)
+# CACHE
 # =========================
 JOIN_CACHE = {}
 CACHE_TTL = 60
@@ -100,14 +100,14 @@ def join_kb():
 
 
 # =========================
-# JOIN CHECK CORE
+# CHECK JOIN CORE (FAST + CACHE)
 # =========================
 async def check_join(bot, user_id: int, chat: int) -> bool:
-    try:
-        cached = cache_get(user_id, chat)
-        if cached is not None:
-            return cached
+    cached = cache_get(user_id, chat)
+    if cached is not None:
+        return cached
 
+    try:
         member = await bot.get_chat_member(chat_id=chat, user_id=user_id)
         status = member.status
 
@@ -115,7 +115,7 @@ async def check_join(bot, user_id: int, chat: int) -> bool:
 
         cache_set(user_id, chat, ok)
 
-        print(f"[JOIN CHECK] user={user_id} chat={chat} status={status} -> {ok}")
+        print(f"[JOIN CHECK] user={user_id} chat={chat} status={status} ok={ok}")
 
         return ok
 
@@ -130,33 +130,6 @@ async def force_join(bot, user_id: int) -> bool:
         check_join(bot, user_id, GROUP)
     )
     return ch and gp
-
-
-# =========================
-# DB
-# =========================
-async def save_user(user):
-    try:
-        pool = get_pool()
-        async with pool.acquire() as conn:
-            await conn.execute(
-                "INSERT INTO users (user_id, username) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-                user.id, user.username
-            )
-    except:
-        pass
-
-
-async def get_balance(user_id: int):
-    try:
-        pool = get_pool()
-        async with pool.acquire() as conn:
-            return await conn.fetchval(
-                "SELECT balance FROM users WHERE user_id=$1",
-                user_id
-            ) or 0
-    except:
-        return 0
 
 
 # =========================
@@ -205,56 +178,37 @@ async def cek_join(callback: CallbackQuery, bot):
             reply_markup=home_kb(),
             parse_mode="HTML"
         )
-        await callback.answer()
     else:
         await callback.answer("❌ Belum join semua", show_alert=True)
 
-
-# =========================
-# HOME
-# =========================
-@router.callback_query(F.data == "home")
-async def home(callback: CallbackQuery):
-
-    if is_maintenance():
-        await callback.answer("⚙️ Maintenance", show_alert=True)
-        return
-
-    user = callback.from_user
-    balance = await get_balance(user.id)
-
-    await callback.message.edit_text(
-        dashboard_text(user, balance),
-        reply_markup=home_kb(),
-        parse_mode="HTML"
-    )
     await callback.answer()
 
 
 # =========================
-# 🔥 REAL-TIME DETECTOR (CHAT MEMBER UPDATE)
+# REAL-TIME JOIN DETECTOR + AUTO BAN
 # =========================
-@router.chat_member()
+@router.chat_member(ChatMemberUpdatedFilter(member_status_changed=True))
 async def on_chat_member(update: ChatMemberUpdated, bot):
 
     user_id = update.from_user.id
     new_status = update.new_chat_member.status
 
-    print(f"[CHAT MEMBER] user={user_id} status={new_status}")
+    print(f"[CHAT MEMBER UPDATE] user={user_id} status={new_status}")
 
     # kalau keluar / kick
     if new_status in ("left", "kicked"):
 
         cache_clear_user(user_id)
 
+        # AUTO BAN (pastikan bot admin di channel & group)
         try:
             await bot.ban_chat_member(CHANNEL, user_id)
-        except:
-            pass
+        except Exception as e:
+            print("[BAN CHANNEL ERROR]", e)
 
         try:
             await bot.ban_chat_member(GROUP, user_id)
-        except:
-            pass
+        except Exception as e:
+            print("[BAN GROUP ERROR]", e)
 
-        print(f"[AUTO BAN] user={user_id}")
+        print(f"[AUTO BAN EXECUTED] user={user_id}")
