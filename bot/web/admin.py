@@ -1,21 +1,104 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
+import os
+import json
+import asyncio
 
 from bot.db.database import get_pool
+from bot.state.admin_state import set_maintenance, is_maintenance, push_log
 from services.notify import send_group, broadcast
-
-import os
 
 router = APIRouter()
 
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "changeme")
 
+
+# =========================
+# AUTH
+# =========================
 def check_token(token: str) -> bool:
     return token == ADMIN_TOKEN
 
 
 # =========================
-# ADMIN DASHBOARD
+# WEBSOCKET MANAGER
+# =========================
+class ConnectionManager:
+    def __init__(self):
+        self.active: list[WebSocket] = []
+
+    async def connect(self, ws: WebSocket):
+        await ws.accept()
+        self.active.append(ws)
+
+    def disconnect(self, ws: WebSocket):
+        if ws in self.active:
+            self.active.remove(ws)
+
+    async def broadcast(self, data: dict):
+        dead = []
+        for ws in self.active:
+            try:
+                await ws.send_text(json.dumps(data))
+            except:
+                dead.append(ws)
+
+        for d in dead:
+            self.disconnect(d)
+
+
+manager = ConnectionManager()
+
+
+# =========================
+# WEBSOCKET ENDPOINT
+# =========================
+@router.websocket("/admin/ws")
+async def ws_endpoint(ws: WebSocket):
+    await manager.connect(ws)
+
+    try:
+        while True:
+            # keep alive / ignore client messages
+            await ws.receive_text()
+
+    except WebSocketDisconnect:
+        manager.disconnect(ws)
+
+
+# =========================
+# PUSH STATS (REALTIME ENGINE)
+# =========================
+async def push_stats():
+    pool = get_pool()
+
+    async with pool.acquire() as conn:
+        users = await conn.fetchval("SELECT COUNT(*) FROM users") or 0
+        trx = await conn.fetchval("SELECT COUNT(*) FROM transactions") or 0
+        balance = await conn.fetchval("SELECT COALESCE(SUM(balance),0) FROM users") or 0
+
+    await manager.broadcast({
+        "type": "stats",
+        "users": users,
+        "trx": trx,
+        "balance": int(balance)
+    })
+
+
+# =========================
+# PUSH LOG
+# =========================
+async def push_live_log(message: str):
+    push_log(message)
+
+    await manager.broadcast({
+        "type": "log",
+        "data": list(reversed(getattr(push_log, "buffer", [])))
+    })
+
+
+# =========================
+# DASHBOARD UI
 # =========================
 @router.get("/admin", response_class=HTMLResponse)
 async def admin_dashboard(token: str = Query(default="")):
@@ -23,131 +106,267 @@ async def admin_dashboard(token: str = Query(default="")):
     if not check_token(token):
         return HTMLResponse("403 Forbidden", status_code=403)
 
-    html = """
+    return f"""
 <!DOCTYPE html>
 <html>
 <head>
-<title>Admin Control Center</title>
-
-<script>
-
-const token = "__TOKEN__";
-let selectedUser = null;
-
-async function loadUsers(){
-    const res = await fetch(`/admin/api/users?token=${token}`);
-    const data = await res.json();
-
-    let html = "<h3>👥 USER LIST</h3>";
-
-    data.forEach(u => {
-        html += `
-        <div style="padding:10px;margin:5px;background:#222;cursor:pointer"
-             onclick="selectUser(${u.user_id})">
-            👤 ${u.username ? u.username : "no_username"} <br>
-            ID: ${u.user_id}
-        </div>`;
-    });
-
-    document.getElementById("users").innerHTML = html;
-}
-
-async function selectUser(id){
-    selectedUser = id;
-
-    const res = await fetch(`/admin/api/user/detail?token=${token}&user_id=${id}`);
-    const d = await res.json();
-
-    document.getElementById("detail").innerHTML = `
-        <h3>📌 USER DETAIL</h3>
-        <b>ID:</b> ${d.user_id}<br>
-        <b>Username:</b> ${d.username}<br>
-        <b>Balance:</b> Rp ${d.balance}<br>
-        <b>Bank:</b> ${d.bank || "-"}<br>
-        <hr>
-        <h4>📦 Codes</h4>
-        ${d.codes.map(c => `<div>🔑 ${c.code} | Rp ${c.price}</div>`).join("")}
-    `;
-}
-
-async function broadcast(){
-    const msg = document.getElementById("bc").value;
-
-    await fetch(`/admin/api/broadcast?token=${token}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: msg })
-    });
-
-    alert("Broadcast sent");
-}
-
-async function toggleMaintenance(){
-    await fetch(`/admin/api/maintenance/toggle?token=${token}`, {
-        method: "POST"
-    });
-
-    alert("Maintenance toggled");
-}
-
-window.onload = loadUsers;
-
-</script>
+<title>ADMIN PRO DASHBOARD</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
 <style>
-body{
-    background:#0f0f0f;
-    color:white;
+body {{
+    margin:0;
     font-family:Arial;
+    background:#0a0f1a;
+    color:#e5e7eb;
     display:flex;
-}
+    height:100vh;
+}}
 
-.panel{
-    width:30%;
+.sidebar {{
+    width:270px;
+    background:#111827;
     padding:10px;
-    border-right:1px solid #333;
-}
+    overflow:auto;
+}}
 
-.detail{
-    width:70%;
+.main {{
+    flex:1;
+    padding:12px;
+    overflow:auto;
+}}
+
+.card {{
+    background:#1f2937;
     padding:10px;
-}
+    margin:6px 0;
+    border-radius:10px;
+    cursor:pointer;
+}}
 
-input,button,textarea{
+.box {{
+    display:inline-block;
+    background:#1f2937;
     padding:10px;
     margin:5px;
-}
-</style>
+    border-radius:10px;
+    width:140px;
+}}
 
+button {{
+    padding:8px;
+    margin:4px;
+    border:none;
+    border-radius:8px;
+    cursor:pointer;
+}}
+
+textarea {{
+    width:100%;
+    height:70px;
+    border-radius:8px;
+}}
+
+.log {{
+    background:#0f172a;
+    height:180px;
+    overflow:auto;
+    padding:10px;
+    font-size:12px;
+}}
+</style>
 </head>
 
 <body>
 
-<div class="panel" id="users"></div>
+<div class="sidebar">
+<h3>👥 USERS</h3>
+<div id="users"></div>
+</div>
 
-<div class="detail">
+<div class="main">
 
-    <div id="detail">Select user</div>
+<h2>📊 REALTIME ADMIN</h2>
 
-    <hr>
+<div class="box">Users<br><b id="u">0</b></div>
+<div class="box">Trx<br><b id="t">0</b></div>
+<div class="box">Balance<br><b id="b">0</b></div>
 
-    <h3>📢 Broadcast</h3>
-    <textarea id="bc" placeholder="message"></textarea><br>
-    <button onclick="broadcast()">Send Broadcast</button>
+<canvas id="chart"></canvas>
 
-    <hr>
+<hr>
 
-    <button onclick="toggleMaintenance()">⚙️ Toggle Maintenance</button>
+<div id="detail" class="card">Select user</div>
+
+<hr>
+
+<h3>📢 BROADCAST</h3>
+<textarea id="msg"></textarea>
+<button onclick="broadcastMsg()">Send</button>
+
+<hr>
+
+<h3>⚙️ MAINTENANCE</h3>
+<button onclick="maint(true)">ON</button>
+<button onclick="maint(false)">OFF</button>
+
+<hr>
+
+<h3>📡 LIVE LOG</h3>
+<div class="log" id="log"></div>
 
 </div>
+
+<script>
+const token = "{token}";
+let ws;
+let chart;
+
+// =========================
+// WS CONNECT
+// =========================
+function connectWS() {{
+    ws = new WebSocket(`ws://${{location.host}}/admin/ws`);
+
+    ws.onmessage = (e) => {{
+        const d = JSON.parse(e.data);
+
+        if(d.type === "stats") {{
+            document.getElementById("u").innerText = d.users;
+            document.getElementById("t").innerText = d.trx;
+            document.getElementById("b").innerText = d.balance;
+
+            updateChart(d.balance);
+        }}
+
+        if(d.type === "log") {{
+            document.getElementById("log").innerHTML =
+                d.data.join("<br>");
+        }}
+    }};
+}}
+
+// =========================
+// CHART
+// =========================
+function initChart() {{
+    const ctx = document.getElementById("chart");
+
+    chart = new Chart(ctx, {{
+        type: "line",
+        data: {{
+            labels: [],
+            datasets: [{{
+                label: "Income",
+                data: [],
+                borderColor: "#22c55e"
+            }}]
+        }}
+    }});
+}}
+
+function updateChart(v) {{
+    const t = new Date().toLocaleTimeString();
+
+    chart.data.labels.push(t);
+    chart.data.datasets[0].data.push(v);
+
+    if(chart.data.labels.length > 20) {{
+        chart.data.labels.shift();
+        chart.data.datasets[0].data.shift();
+    }}
+
+    chart.update();
+}}
+
+// =========================
+// USERS
+// =========================
+async function loadUsers() {{
+    const res = await fetch(`/admin/api/users?token=${{token}}`);
+    const data = await res.json();
+
+    document.getElementById("users").innerHTML =
+        data.map(u => `
+            <div class="card" onclick="selectUser(${{u.user_id}})">
+                👤 ${{u.username || "no_username"}}<br>
+                ID: ${{u.user_id}}
+            </div>
+        `).join("");
+}}
+
+// =========================
+// USER DETAIL
+// =========================
+async function selectUser(id) {{
+    const res = await fetch(`/admin/api/user/detail?token=${{token}}&user_id=${{id}}`);
+    const d = await res.json();
+
+    document.getElementById("detail").innerHTML = `
+        <h3>USER DETAIL</h3>
+        ID: ${{d.user_id}}<br>
+        Username: ${{d.username}}<br>
+        Balance: Rp ${{d.balance}}<br>
+        Bank: ${{d.bank || "-"}}
+    `;
+}}
+
+// =========================
+// BROADCAST
+// =========================
+async function broadcastMsg() {{
+    await fetch(`/admin/api/broadcast?token=${{token}}`, {{
+        method: "POST",
+        headers: {{ "Content-Type": "application/json" }},
+        body: JSON.stringify({{ message: document.getElementById("msg").value }})
+    }});
+}}
+
+// =========================
+// MAINTENANCE
+// =========================
+async function maint(v) {{
+    await fetch(`/admin/api/maintenance?token=${{token}}&v=${{v}}`, {{
+        method: "POST"
+    }});
+}}
+
+// =========================
+// INIT
+// =========================
+window.onload = () => {{
+    connectWS();
+    initChart();
+    loadUsers();
+}};
+</script>
 
 </body>
 </html>
 """
 
-    return HTMLResponse(html.replace("__TOKEN__", token))
+
 # =========================
-# USER LIST
+# API: STATS (fallback)
+# =========================
+@router.get("/admin/api/realtime")
+async def realtime(token: str = Query(default="")):
+
+    if not check_token(token):
+        return {"error": "unauthorized"}
+
+    pool = get_pool()
+
+    async with pool.acquire() as conn:
+        users = await conn.fetchval("SELECT COUNT(*) FROM users") or 0
+        trx = await conn.fetchval("SELECT COUNT(*) FROM transactions") or 0
+        balance = await conn.fetchval("SELECT COALESCE(SUM(balance),0) FROM users") or 0
+
+    return {"users": users, "trx": trx, "balance": int(balance)}
+
+
+# =========================
+# USERS
 # =========================
 @router.get("/admin/api/users")
 async def users(token: str = Query(default="")):
@@ -169,7 +388,7 @@ async def users(token: str = Query(default="")):
 
 
 # =========================
-# USER DETAIL (SALDO + BANK + CODES)
+# USER DETAIL
 # =========================
 @router.get("/admin/api/user/detail")
 async def user_detail(token: str, user_id: int):
@@ -180,7 +399,6 @@ async def user_detail(token: str, user_id: int):
     pool = get_pool()
 
     async with pool.acquire() as conn:
-
         user = await conn.fetchrow("""
             SELECT user_id, username, balance, bank
             FROM users
@@ -194,55 +412,43 @@ async def user_detail(token: str, user_id: int):
         """, user_id)
 
     return {
-        "user_id": user["user_id"],
-        "username": user["username"],
-        "balance": user["balance"],
-        "bank": user["bank"],
+        **dict(user),
         "codes": [dict(c) for c in codes]
     }
 
 
 # =========================
-# BROADCAST SYSTEM
+# BROADCAST
 # =========================
 @router.post("/admin/api/broadcast")
-async def broadcast_api(token: str, payload: dict):
+async def admin_broadcast(token: str, request: Request):
 
     if not check_token(token):
         return {"error": "unauthorized"}
 
-    message = payload.get("message", "")
+    data = await request.json()
+    await broadcast(data.get("message", ""))
 
-    await broadcast(message)
-
-    await send_group(f"📢 BROADCAST SENT:\n{message}")
+    await push_live_log("📢 Broadcast sent")
 
     return {"ok": True}
 
 
 # =========================
-# MAINTENANCE MODE (GLOBAL SWITCH)
+# MAINTENANCE TOGGLE
 # =========================
-MAINTENANCE = False
-
-
-@router.post("/admin/api/maintenance/toggle")
-async def maintenance(token: str):
-
-    global MAINTENANCE
+@router.post("/admin/api/maintenance")
+async def maintenance(token: str, v: bool):
 
     if not check_token(token):
         return {"error": "unauthorized"}
 
-    MAINTENANCE = not MAINTENANCE
+    set_maintenance(v)
 
-    await send_group(f"⚙️ Maintenance: {MAINTENANCE}")
+    await send_group(
+        "⚙️ MAINTENANCE ON" if v else "✅ MAINTENANCE OFF"
+    )
 
-    return {"maintenance": MAINTENANCE}
+    await push_live_log(f"Maintenance set to {v}")
 
-
-# =========================
-# CHECK MAINTENANCE (FOR BOT USE)
-# =========================
-def is_maintenance():
-    return MAINTENANCE
+    return {"ok": True}
