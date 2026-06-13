@@ -92,19 +92,20 @@ async def start_upload(callback: CallbackQuery, state: FSMContext):
 
     await state.set_state(UploadState.collecting)
 
-    await callback.message.edit_text(
-        "📤 UPLOAD MODE ACTIVE\nKirim photo / video sekarang",
+    msg = await callback.message.edit_text(
+        "📤 UPLOAD MODE ACTIVE\n\nKirim photo / video sekarang",
         reply_markup=upload_kb()
     )
 
+    # 🔥 simpan message id untuk edit real-time
+    await state.update_data(upload_msg_id=msg.message_id)
+
     await callback.answer()
-
-
 # =========================
 # COLLECT MEDIA
 # =========================
 @router.message(UploadState.collecting, F.photo | F.video)
-async def collect_media(message: Message):
+async def collect_media(message: Message, state: FSMContext):
 
     uid = message.from_user.id
     if uid not in SESSIONS:
@@ -114,19 +115,38 @@ async def collect_media(message: Message):
 
     if message.photo:
         s["photos"] += 1
-    else:
+    elif message.video:
         s["videos"] += 1
 
     total = s["photos"] + s["videos"]
 
-    await message.answer(
-        f"📥 RECEIVED\n"
+    # 🔥 hapus pesan user biar gak numpuk
+    try:
+        await message.delete()
+    except:
+        pass
+
+    # 🔥 ambil message upload terakhir dari state (biar edit, bukan spam)
+    data = await state.get_data()
+    upload_msg_id = data.get("upload_msg_id")
+
+    text = (
+        "📥 RECEIVED\n"
         f"📸 Photo: {s['photos']}\n"
         f"🎥 Video: {s['videos']}\n"
         f"📦 Total: {total}"
     )
 
-
+    if upload_msg_id:
+        try:
+            await message.bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=upload_msg_id,
+                text=text,
+                reply_markup=upload_kb()
+            )
+        except:
+            pass
 # =========================
 # DONE → MODE
 # =========================
@@ -137,7 +157,7 @@ async def done(callback: CallbackQuery, state: FSMContext):
     if uid not in SESSIONS:
         return await callback.answer("Session expired", show_alert=True)
 
-    await state.set_state(None)
+    await state.set_state(UploadState.payment_input)
 
     await callback.message.edit_text(
         "⚙️ PILIH MODE",
@@ -145,8 +165,6 @@ async def done(callback: CallbackQuery, state: FSMContext):
     )
 
     await callback.answer()
-
-
 # =========================
 # FREE MODE
 # =========================
@@ -311,6 +329,9 @@ async def cancel(callback: CallbackQuery, state: FSMContext):
     SESSIONS.pop(callback.from_user.id, None)
     await state.clear()
 
-    await callback.answer("Cancelled", show_alert=False)
+    await callback.answer("❌ Upload dibatalkan", show_alert=True)
 
-    await callback.message.edit_text("❌ CANCELLED / BACK TO HOME")
+    # balik ke home/dashboard
+    from bot.handlers.start import render
+
+    await render(callback, callback.bot, callback.from_user)
