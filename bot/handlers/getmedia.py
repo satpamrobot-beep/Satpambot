@@ -15,6 +15,8 @@ from bot.db.database import get_pool
 router = Router()
 
 
+def is_valid_file_id(x: str) -> bool:
+    return isinstance(x, str) and len(x) > 10
 # =========================
 # MENU GET MEDIA
 # =========================
