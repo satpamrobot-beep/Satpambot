@@ -1,10 +1,12 @@
-from fastapi import Request, Header
+from fastapi import APIRouter, Request, Header
 from bot.db.database import get_pool
 from services.notify import send_user_payment
 
 import hmac
 import hashlib
 import os
+
+router = APIRouter()
 
 SECRET_KEY = os.getenv("BAYARGG_SECRET", "")
 
@@ -26,9 +28,9 @@ def verify_signature(raw_body: bytes, signature: str | None):
 
 
 # =========================
-# WEBHOOK BAYARGG (PRO MAX)
+# WEBHOOK BAYARGG
 # =========================
-@app.post("/webhook/bayargg")
+@router.post("/webhook/bayargg")
 async def bayargg_webhook(
     request: Request,
     x_signature: str = Header(default=None)
@@ -37,15 +39,11 @@ async def bayargg_webhook(
         raw = await request.body()
         data = await request.json()
 
-        # =========================
         # 1. SECURITY CHECK
-        # =========================
         if not verify_signature(raw, x_signature):
             return {"ok": False, "error": "invalid signature"}
 
-        # =========================
         # 2. VALIDATE STATUS
-        # =========================
         if data.get("status") != "PAID":
             return {"ok": True}
 
@@ -60,9 +58,7 @@ async def bayargg_webhook(
 
         async with pool.acquire() as conn:
 
-            # =========================
-            # 3. ANTI DUPLICATE (DB LEVEL)
-            # =========================
+            # 3. ANTI DUPLICATE
             exists = await conn.fetchval(
                 "SELECT 1 FROM transactions WHERE trx_id=$1",
                 trx_id
@@ -71,26 +67,20 @@ async def bayargg_webhook(
             if exists:
                 return {"ok": True, "message": "already processed"}
 
-            # =========================
-            # 4. INSERT TRANSACTION LOG
-            # =========================
+            # 4. INSERT TRANSACTION
             await conn.execute("""
                 INSERT INTO transactions (trx_id, user_id, amount, status)
                 VALUES ($1, $2, $3, 'SUCCESS')
             """, trx_id, user_id, amount)
 
-            # =========================
-            # 5. UPDATE BALANCE (ATOMIC SAFE)
-            # =========================
+            # 5. UPDATE BALANCE
             await conn.execute("""
                 UPDATE users
                 SET balance = COALESCE(balance,0) + $1
                 WHERE user_id=$2
             """, amount, user_id)
 
-        # =========================
-        # 6. SEND TELEGRAM NOTIFICATION (AFTER DB SUCCESS)
-        # =========================
+        # 6. NOTIFICATION
         await send_user_payment(user_id, amount)
 
         return {"ok": True}
