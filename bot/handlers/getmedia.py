@@ -1,4 +1,4 @@
-import json
+import re
 
 from aiogram import Router, F
 from aiogram.types import (
@@ -14,6 +14,10 @@ from bot.db.database import get_pool
 
 router = Router()
 
+
+# =========================
+# MENU GET MEDIA
+# =========================
 @router.callback_query(F.data == "getmedia")
 async def getmedia_menu(callback: CallbackQuery):
 
@@ -27,12 +31,14 @@ async def getmedia_menu(callback: CallbackQuery):
 
 
 # =========================
-# GET CODE
+# GET CODE (FIXED SAFE VERSION)
 # =========================
-@router.message(F.text.startswith("/get "))
+@router.message(F.text.regexp(r"^/get"))
 async def get_media(message: Message):
 
-    parts = message.text.split(maxsplit=1)
+    text = (message.text or "").strip()
+
+    parts = text.split(maxsplit=1)
 
     if len(parts) < 2:
         return await message.answer(
@@ -41,23 +47,29 @@ async def get_media(message: Message):
 
     code = parts[1].strip()
 
+    # validasi format code
+    if not re.fullmatch(r"earnfilebot_[A-Za-z0-9]+", code):
+        return await message.answer("❌ Format code tidak valid")
+
     pool = get_pool()
 
-    async with pool.acquire() as conn:
+    try:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT *
+                FROM uploads
+                WHERE code=$1
+                """,
+                code
+            )
 
-        row = await conn.fetchrow(
-            """
-            SELECT *
-            FROM uploads
-            WHERE code=$1
-            """,
-            code
-        )
+    except Exception as e:
+        print("GET DB ERROR:", e)
+        return await message.answer("❌ Database error")
 
     if not row:
-        return await message.answer(
-            "❌ Code tidak ditemukan"
-        )
+        return await message.answer("❌ Code tidak ditemukan")
 
     photos = row["photos"] or []
     videos = row["videos"] or []
@@ -99,16 +111,20 @@ async def open_file(callback: CallbackQuery):
 
     pool = get_pool()
 
-    async with pool.acquire() as conn:
+    try:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT *
+                FROM uploads
+                WHERE code=$1
+                """,
+                code
+            )
 
-        row = await conn.fetchrow(
-            """
-            SELECT *
-            FROM uploads
-            WHERE code=$1
-            """,
-            code
-        )
+    except Exception as e:
+        print("OPEN DB ERROR:", e)
+        return await callback.answer("❌ Database error", show_alert=True)
 
     if not row:
         return await callback.answer(
@@ -122,18 +138,10 @@ async def open_file(callback: CallbackQuery):
     media = []
 
     for photo in photos:
-        media.append(
-            InputMediaPhoto(
-                media=photo
-            )
-        )
+        media.append(InputMediaPhoto(media=photo))
 
     for video in videos:
-        media.append(
-            InputMediaVideo(
-                media=video
-            )
-        )
+        media.append(InputMediaVideo(media=video))
 
     if not media:
         return await callback.answer(
@@ -142,14 +150,9 @@ async def open_file(callback: CallbackQuery):
         )
 
     while media:
-
         chunk = media[:10]
         media = media[10:]
 
-        await callback.message.answer_media_group(
-            media=chunk
-        )
+        await callback.message.answer_media_group(media=chunk)
 
-    await callback.answer(
-        "✅ File berhasil dibuka"
-    )
+    await callback.answer("✅ File berhasil dibuka")
