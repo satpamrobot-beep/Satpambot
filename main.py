@@ -8,6 +8,7 @@ from bot.loader import bot, dp
 from bot.db.database import init_db
 from bot.handlers import start
 from services.notify import set_bot
+from bot.web.admin import router as admin_router
 
 # =========================
 # FASTAPI APP
@@ -19,7 +20,7 @@ app = FastAPI()
 # =========================
 from bot.webhook import router as bayargg_router
 app.include_router(bayargg_router)
-
+app.include_router(admin_router)
 
 # =========================
 # BOT STARTUP
