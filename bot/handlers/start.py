@@ -77,21 +77,41 @@ def join_kb():
 async def check_join(bot, user_id: int, chat: int) -> bool:
     try:
         member = await bot.get_chat_member(chat_id=chat, user_id=user_id)
-        return member.status in ("member", "administrator", "creator", "restricted")
+
+        return member.status in (
+            "member",
+            "administrator",
+            "creator"
+        )
+
     except Exception:
         return False
-
 
 # =========================
 # FORCE JOIN (FAST PARALLEL)
 # =========================
 async def force_join(bot, user_id: int) -> bool:
-    ch, gp = await asyncio.gather(
-        check_join(bot, user_id, CHANNEL),
-        check_join(bot, user_id, GROUP)
-    )
-    return ch and gp
+    try:
+        ch_task = check_join(bot, user_id, CHANNEL)
+        gp_task = check_join(bot, user_id, GROUP)
 
+        ch, gp = await asyncio.gather(ch_task, gp_task)
+
+        # 🔥 DEBUG (penting untuk cek bug)
+        print(f"[JOIN CHECK] user={user_id} channel={ch} group={gp}")
+
+        # 🔥 STRICT CHECK
+        if ch is not True:
+            return False
+
+        if gp is not True:
+            return False
+
+        return True
+
+    except Exception as e:
+        print("[FORCE JOIN ERROR]", e)
+        return False
 
 # =========================
 # SAVE USER (NON BLOCKING)
