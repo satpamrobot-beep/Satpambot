@@ -1,22 +1,33 @@
 package main
 
 import (
-	"fmt"
-	"net/http"
+	"log"
 	"os"
+	"os/signal"
+	"syscall"
+
+	"decoder-bot/internal/bot"
 )
 
 func main() {
-	fmt.Println("Bot Online")
-
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintln(w, "OK")
-	})
-
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
+	token := os.Getenv("BOT_TOKEN")
+	if token == "" {
+		log.Fatal("BOT_TOKEN tidak ditemukan")
 	}
 
-	http.ListenAndServe(":"+port, nil)
+	b, err := bot.NewBot(token)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	go b.Start()
+
+	log.Println("Bot Online")
+
+	// Graceful shutdown
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	<-stop
+
+	log.Println("Bot Stop")
 }
