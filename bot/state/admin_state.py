@@ -1,23 +1,20 @@
-import asyncio
 from typing import List, Dict, Any
 from collections import deque
 from datetime import datetime
 
 
 # =========================================================
-# GLOBAL STATE (SINGLE SOURCE OF TRUTH)
+# GLOBAL STATE (SINGLE SOURCE)
 # =========================================================
 class State:
     maintenance: bool = False
-    lock = asyncio.Lock()
 
 
-# =========================================================
-# MAINTENANCE CONTROL (SAFE)
-# =========================================================
-async def set_maintenance(value: bool):
-    async with State.lock:
-        State.maintenance = bool(value)
+def set_maintenance(value: bool):
+    """
+    Toggle maintenance mode (SYNC ONLY → lebih stabil)
+    """
+    State.maintenance = bool(value)
 
 
 def is_maintenance() -> bool:
@@ -68,7 +65,7 @@ def get_events() -> Dict[str, int]:
 
 
 # =========================================================
-# SNAPSHOT (FOR WS / DASHBOARD)
+# SNAPSHOT (FOR WS DASHBOARD)
 # =========================================================
 def get_state_snapshot(extra: dict | None = None) -> Dict[str, Any]:
     snapshot = {
