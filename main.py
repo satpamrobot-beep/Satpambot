@@ -13,7 +13,6 @@ from bot.web.admin import router as admin_router
 from bot.webhook import router as bayargg_router
 
 from bot.handlers import start
-from bot.handlers import dashboard
 from bot.handlers import upload
 
 
@@ -36,7 +35,6 @@ async def on_startup():
     # REGISTER ALL ROUTERS (WAJIB)
     # =========================
     dp.include_router(start.router)
-    dp.include_router(dashboard.router)
     dp.include_router(upload.router)
 
     # =========================
