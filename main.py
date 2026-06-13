@@ -8,11 +8,13 @@ from bot.loader import bot, dp
 from bot.db.database import init_db
 
 from bot.middleware.maintenance import MaintenanceMiddleware
+
 from bot.web.admin import router as admin_router
 from bot.webhook import router as bayargg_router
 
-from services.notify import set_bot
 from bot.handlers import start
+from bot.handlers import dashboard
+from bot.handlers import upload
 
 
 # =========================
@@ -25,35 +27,38 @@ app.include_router(admin_router)
 
 
 # =========================
-# BOT STARTUP HOOK
+# STARTUP
 # =========================
 async def on_startup():
     await init_db()
-    set_bot(bot)
 
-    # ROUTER ONLY ONCE
+    # =========================
+    # REGISTER ALL ROUTERS (WAJIB)
+    # =========================
     dp.include_router(start.router)
+    dp.include_router(dashboard.router)
+    dp.include_router(upload.router)
 
-    # MIDDLEWARE ORDER (IMPORTANT)
+    # =========================
+    # MIDDLEWARE (SAFE)
+    # =========================
     dp.message.middleware(MaintenanceMiddleware())
     dp.callback_query.middleware(MaintenanceMiddleware())
 
-
     print("🤖 Bot ready")
 
+
 # =========================
-# BOT RUNNER
+# BOT
 # =========================
 async def start_bot():
     await on_startup()
-
     print("🤖 Bot polling started")
-
     await dp.start_polling(bot)
 
 
 # =========================
-# FASTAPI RUNNER
+# API
 # =========================
 async def start_api():
     PORT = int(os.getenv("PORT", 8000))
