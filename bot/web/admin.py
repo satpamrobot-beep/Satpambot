@@ -446,7 +446,7 @@ async def maintenance(token: str, v: bool):
     set_maintenance(v)
 
     await send_group(
-        "⚙️ MAINTENANCE ON" if v else "✅ MAINTENANCE OFF"
+        "⚙️ MAINTENANCE ‼️ Sistem Bot Dalam Perbaikan" if v else "✅ MAINTENANCE Done ✅ Bot Selesai Dalam Perbaikan"
     )
 
     await push_live_log(f"Maintenance set to {v}")
