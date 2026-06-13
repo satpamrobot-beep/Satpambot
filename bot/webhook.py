@@ -1,11 +1,10 @@
-import os
+from fastapi import Request, Header
+from bot.db.database import get_pool
+from services.notify import send_user_payment
+
 import hmac
 import hashlib
-from fastapi import FastAPI, Request, Header
-
-from bot.db.database import get_pool
-
-app = FastAPI()
+import os
 
 SECRET_KEY = os.getenv("BAYARGG_SECRET", "")
 
@@ -27,21 +26,7 @@ def verify_signature(raw_body: bytes, signature: str | None):
 
 
 # =========================
-# SEND NOTIFICATION (OPTIONAL TELEGRAM)
-# =========================
-async def send_telegram(bot_pool, user_id: int, amount: int):
-    try:
-        async with bot_pool.acquire() as conn:
-            await conn.execute(
-                "SELECT 1"
-            )
-        # kalau kamu mau, nanti kita sambungkan ke aiogram bot instance
-    except:
-        pass
-
-
-# =========================
-# WEBHOOK BAYARGG (PRODUCTION LEVEL)
+# WEBHOOK BAYARGG (PRO MAX)
 # =========================
 @app.post("/webhook/bayargg")
 async def bayargg_webhook(
@@ -53,16 +38,16 @@ async def bayargg_webhook(
         data = await request.json()
 
         # =========================
-        # 1. VERIFY SIGNATURE
+        # 1. SECURITY CHECK
         # =========================
         if not verify_signature(raw, x_signature):
             return {"ok": False, "error": "invalid signature"}
 
         # =========================
-        # 2. VALIDATE PAYMENT
+        # 2. VALIDATE STATUS
         # =========================
         if data.get("status") != "PAID":
-            return {"ok": False}
+            return {"ok": True}
 
         user_id = int(data.get("customer_id", 0))
         amount = int(data.get("amount", 0))
@@ -76,7 +61,7 @@ async def bayargg_webhook(
         async with pool.acquire() as conn:
 
             # =========================
-            # 3. CHECK DUPLICATE (DB LEVEL - REAL PROTECTION)
+            # 3. ANTI DUPLICATE (DB LEVEL)
             # =========================
             exists = await conn.fetchval(
                 "SELECT 1 FROM transactions WHERE trx_id=$1",
@@ -95,13 +80,18 @@ async def bayargg_webhook(
             """, trx_id, user_id, amount)
 
             # =========================
-            # 5. UPDATE BALANCE (ATOMIC)
+            # 5. UPDATE BALANCE (ATOMIC SAFE)
             # =========================
             await conn.execute("""
                 UPDATE users
                 SET balance = COALESCE(balance,0) + $1
                 WHERE user_id=$2
             """, amount, user_id)
+
+        # =========================
+        # 6. SEND TELEGRAM NOTIFICATION (AFTER DB SUCCESS)
+        # =========================
+        await send_user_payment(user_id, amount)
 
         return {"ok": True}
 
