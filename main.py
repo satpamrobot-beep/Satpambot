@@ -38,8 +38,6 @@ async def on_startup():
     dp.message.middleware(MaintenanceMiddleware())
     dp.callback_query.middleware(MaintenanceMiddleware())
 
-    dp.message.middleware(ForceJoinMiddleware())
-    dp.callback_query.middleware(ForceJoinMiddleware())
 
     print("🤖 Bot ready")
 
