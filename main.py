@@ -1,4 +1,5 @@
 import asyncio
+import os
 import uvicorn
 
 from fastapi import FastAPI
@@ -14,10 +15,11 @@ from services.notify import set_bot
 app = FastAPI()
 
 # =========================
-# IMPORT WEBHOOK ROUTER (FIXED)
+# WEBHOOK ROUTER
 # =========================
 from bot.webhook import router as bayargg_router
 app.include_router(bayargg_router)
+
 
 # =========================
 # BOT STARTUP
@@ -37,15 +39,18 @@ async def start_bot():
 
 
 # =========================
-# FASTAPI RUNNER
+# FASTAPI RUNNER (RAILWAY SAFE)
 # =========================
 async def start_api():
+    PORT = int(os.getenv("PORT", 8000))
+
     config = uvicorn.Config(
         app,
         host="0.0.0.0",
-        port=8000,
+        port=PORT,
         log_level="info"
     )
+
     server = uvicorn.Server(config)
     await server.serve()
 
