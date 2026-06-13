@@ -21,7 +21,17 @@ SESSIONS = {}
 
 CHANNEL_ID = -1003721009353
 
-
+def normalize_list(data):
+    if data is None:
+        return []
+    if isinstance(data, list):
+        return data
+    if isinstance(data, str):
+        try:
+            return json.loads(data)
+        except:
+            return []
+    return []
 # =========================
 # STATE
 # =========================
@@ -535,8 +545,8 @@ async def save(callback: CallbackQuery, state: FSMContext):
                     """,
                     uid,
                     code,
-                    json.dumps(s["photos"]),
-                    json.dumps(s["videos"]),
+                    s["photos"]),
+                    s["videos"]),
                     s["mode"],
                     s["payment"],
                     s["share"]
